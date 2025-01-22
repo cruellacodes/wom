@@ -3,7 +3,6 @@ import logging
 from typing import List, Dict
 import datetime as dt
 
-
 # Constants
 FETCH_API_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
 SEARCH_API_URL = "https://api.dexscreener.com/latest/dex/search"
@@ -29,21 +28,21 @@ def fetch_latest_tokens() -> List[Dict]:
     return tokens
 
 
-def search_token_pairs(token_address: str) -> Dict:
+def search_token_pairs(token_address: str) -> List[Dict]:
     """Search for token pairs by token address."""
     logging.info(f"Searching pairs for token: {token_address}...")
     response = requests.get(f"{SEARCH_API_URL}?q={token_address}", headers=HEADERS)
 
     if response.status_code != 200:
         logging.error(f"Failed to search pairs for {token_address}. Status Code: {response.status_code}")
-        return {}
+        return []
 
     data = response.json()
     return data.get("pairs", [])
 
 
-def filter_and_display(tokens: List[Dict]) -> None:
-    """Filter tokens based on criteria and display results."""
+def filter_and_display(tokens: List[Dict]) -> List[Dict]:
+    """Filter tokens based on criteria and return results."""
     logging.info("Filtering tokens based on criteria...")
     results = []
 
@@ -100,13 +99,23 @@ def filter_and_display(tokens: List[Dict]) -> None:
     else:
         logging.info("No tokens matched the criteria.")
 
+    return results  # Return filtered tokens
 
 
-def main():
+def main() -> List[Dict]:
+    """Main function to fetch and filter tokens."""
     tokens = fetch_latest_tokens()
     if tokens:
-        filter_and_display(tokens)
+        return filter_and_display(tokens)
+    return []
 
 
 if __name__ == "__main__":
-    main()
+    # Execute the tracker
+    new_pairs = main()
+    if new_pairs:
+        print("\nNew Token Pairs:")
+        for pair in new_pairs:
+            print(f"Token: {pair['token_name']} (${pair['token_symbol']})")
+    else:
+        print("No new token pairs found.")
