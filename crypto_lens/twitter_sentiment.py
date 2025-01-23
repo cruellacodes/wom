@@ -33,7 +33,6 @@ def analyze_cashtags(cashtags):
     for cashtag in cashtags:
         print(f"Analyzing tweets for {cashtag}...")
 
-        # Prepare Actor input for Twitter scraping
         run_input = {
             "searchTerms": [cashtag],
             "maxItems": 50,
