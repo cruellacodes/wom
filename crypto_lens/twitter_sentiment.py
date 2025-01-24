@@ -13,7 +13,7 @@ if not api_token:
 # Initialize the ApifyClient
 client = ApifyClient(api_token)
 
-# Step 1: Fetch new token pairs
+# Step 1: Fetch new token pairs and remove duplicates
 def get_new_pairs():
     # Call the tracker to fetch new token pairs
     tokens = fetch_new_pairs()  # This returns the results from the tracker
@@ -21,9 +21,9 @@ def get_new_pairs():
         print("No tokens fetched from the tracker.")
         return []
 
-    # Extract and format cashtags
-    cashtags = [f"${token['token_symbol']}" for token in tokens if token.get("token_symbol")]
-    print(f"Found cashtags: {cashtags}")
+    # Extract cashtags and remove duplicates
+    cashtags = list(set(f"${token['token_symbol']}" for token in tokens if token.get("token_symbol")))
+    print(f"Found unique cashtags: {cashtags}")
     return cashtags
 
 # Step 2: Search Twitter and Perform Sentiment Analysis
@@ -33,6 +33,7 @@ def analyze_cashtags(cashtags):
     for cashtag in cashtags:
         print(f"Analyzing tweets for {cashtag}...")
 
+        # Prepare Actor input for Twitter scraping
         run_input = {
             "searchTerms": [cashtag],
             "maxItems": 50,
