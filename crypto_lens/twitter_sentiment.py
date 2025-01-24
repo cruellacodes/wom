@@ -31,11 +31,13 @@ def analyze_cashtags(cashtags):
     overall_sentiments = {}
 
     for cashtag in cashtags:
-        print(f"Analyzing tweets for {cashtag}...")
+        # Check if the symbol is longer than 6 characters
+        search_term = cashtag[1:] if len(cashtag) > 7 else cashtag
+        print(f"Analyzing tweets for {search_term}...")
 
         # Prepare Actor input for Twitter scraping
         run_input = {
-            "searchTerms": [cashtag],
+            "searchTerms": [search_term],  # Use modified search term
             "maxItems": 50,
             "sort": "Latest",
             "tweetLanguage": "en",
@@ -66,7 +68,7 @@ def analyze_cashtags(cashtags):
                 overall_sentiments[cashtag] = "No tweets found"
 
         except Exception as e:
-            print(f"Error analyzing tweets for {cashtag}: {e}")
+            print(f"Error analyzing tweets for {search_term}: {e}")
             overall_sentiments[cashtag] = "Error fetching tweets"
 
     return overall_sentiments
