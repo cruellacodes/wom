@@ -56,27 +56,37 @@ def analyze_cashtags(cashtags):
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 raw_tweet = item.get("text", "").strip()
                 tweet_text = preprocess_tweet(raw_tweet)
+                created_at = item.get("createdAt")  # Extract tweet timestamp
 
-                # Filter out irrelevant tweets
                 if not is_relevant_tweet(tweet_text):
                     continue
 
-                # Filter out tweets by users with less than 150 followers
-                user_followers_count = item.get("userFollowersCount", 0)
-                if user_followers_count < 150:
-                    continue
+                author_info = item.get("author", {})
+                followers_count = author_info.get("followers", 0)
+                if followers_count < 150:
+                    continue  # Skip this tweet
 
-                # Perform sentiment analysis
+
                 score = calculate_bullishness(tweet_text)
                 bullishness_scores.append(score)
 
+                # Append tweet data
+                data.append(
+                    {
+                        "Cashtag": cashtag,
+                        "Bullishness": score,
+                        "created_at": created_at,  # Include timestamp
+                        "Tweet_Text": raw_tweet,  # Include original tweet text
+                    }
+                )
+
+            # Calculate average bullishness
             if bullishness_scores:
                 avg_bullishness = round(sum(bullishness_scores) / len(bullishness_scores), 2)
                 data.append({"Cashtag": cashtag, "Bullishness": avg_bullishness})
-            else:
-                data.append({"Cashtag": cashtag, "Bullishness": None})
 
         except Exception:
             data.append({"Cashtag": cashtag, "Bullishness": "Error"})
 
     return pd.DataFrame(data)
+
