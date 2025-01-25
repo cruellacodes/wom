@@ -1,4 +1,5 @@
 import os
+import pandas as pd
 from apify_client import ApifyClient
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from scipy.special import softmax
@@ -25,29 +26,21 @@ def calculate_bullishness(tweet_text):
     """Analyze sentiment and calculate bullishness percentage using FinBERT."""
     inputs = tokenizer(tweet_text, return_tensors="pt", truncation=True, padding=True)
     outputs = model(**inputs)
-    probs = softmax(outputs.logits.detach().numpy()[0])  # Convert logits to probabilities
+    probs = softmax(outputs.logits.detach().numpy()[0])
 
-    # Explicitly round probabilities
+    # Probabilities for bullish, neutral, and bearish
     bullish_prob = round(probs[0] * 100, 2)
-    neutral_prob = round(probs[1] * 100, 2)
     bearish_prob = round(probs[2] * 100, 2)
-
-    # Calculate bullishness score
     bullishness_score = round(bullish_prob / (bullish_prob + bearish_prob), 2)
-    return {
-        "bullish": bullish_prob,
-        "neutral": neutral_prob,
-        "bearish": bearish_prob,
-        "bullishness_percentage": bullishness_score,
-    }
+    return bullishness_score
 
 
 def analyze_cashtags(cashtags):
-    overall_sentiments = {}
+    """Analyze sentiment for a list of cashtags."""
+    data = []
 
     for cashtag in cashtags:
         search_term = cashtag[1:] if len(cashtag) > 6 else cashtag
-        print(f"Analyzing tweets for {search_term}...")
 
         run_input = {
             "searchTerms": [search_term],
@@ -58,30 +51,32 @@ def analyze_cashtags(cashtags):
 
         try:
             run = client.actor("61RPP7dywgiy0JPD0").call(run_input=run_input)
+            bullishness_scores = []
 
-            bullishness_scores = []  # Store rounded bullishness percentages
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 raw_tweet = item.get("text", "").strip()
                 tweet_text = preprocess_tweet(raw_tweet)
 
+                # Filter out irrelevant tweets
                 if not is_relevant_tweet(tweet_text):
                     continue
 
-                # Calculate bullishness and append rounded value
-                sentiment_result = calculate_bullishness(tweet_text)
-                rounded_score = round(sentiment_result["bullishness_percentage"], 2)
-                bullishness_scores.append(rounded_score)
+                # Filter out tweets by users with less than 150 followers
+                user_followers_count = item.get("userFollowersCount", 0)
+                if user_followers_count < 150:
+                    continue
+
+                # Perform sentiment analysis
+                score = calculate_bullishness(tweet_text)
+                bullishness_scores.append(score)
 
             if bullishness_scores:
-                # Compute final average
-                average_bullishness = round(sum(bullishness_scores) / len(bullishness_scores), 2)
-                # Use f-string formatting for consistent decimal places
-                overall_sentiments[cashtag] = f"{average_bullishness:.2f}% bullish"
+                avg_bullishness = round(sum(bullishness_scores) / len(bullishness_scores), 2)
+                data.append({"Cashtag": cashtag, "Bullishness": avg_bullishness})
             else:
-                overall_sentiments[cashtag] = "No tweets found"
+                data.append({"Cashtag": cashtag, "Bullishness": None})
 
-        except Exception as e:
-            print(f"Error analyzing tweets for {search_term}: {e}")
-            overall_sentiments[cashtag] = "Error fetching tweets"
+        except Exception:
+            data.append({"Cashtag": cashtag, "Bullishness": "Error"})
 
-    return overall_sentiments
+    return pd.DataFrame(data)
