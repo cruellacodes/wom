@@ -5,7 +5,7 @@ from scipy.special import softmax
 from utils import preprocess_tweet, is_relevant_tweet
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+# Load environment variables
 load_dotenv()
 
 # Get the API token from the environment
@@ -27,18 +27,18 @@ def calculate_bullishness(tweet_text):
     outputs = model(**inputs)
     probs = softmax(outputs.logits.detach().numpy()[0])  # Convert logits to probabilities
 
-    # Probabilities for bullish (positive), neutral, and bearish (negative)
-    bullish_prob = probs[0]
-    neutral_prob = probs[1]
-    bearish_prob = probs[2]
+    # Explicitly round probabilities
+    bullish_prob = round(probs[0] * 100, 2)
+    neutral_prob = round(probs[1] * 100, 2)
+    bearish_prob = round(probs[2] * 100, 2)
 
-    # Calculate bullishness score as a percentage
-    bullishness_score = bullish_prob / (bullish_prob + bearish_prob) * 100
+    # Calculate bullishness score
+    bullishness_score = round(bullish_prob / (bullish_prob + bearish_prob), 2)
     return {
         "bullish": bullish_prob,
         "neutral": neutral_prob,
         "bearish": bearish_prob,
-        "bullishness_percentage": round(bullishness_score, 2),
+        "bullishness_percentage": bullishness_score,
     }
 
 
@@ -46,7 +46,7 @@ def analyze_cashtags(cashtags):
     overall_sentiments = {}
 
     for cashtag in cashtags:
-        search_term = cashtag[1:] if len(cashtag) > 7 else cashtag
+        search_term = cashtag[1:] if len(cashtag) > 6 else cashtag
         print(f"Analyzing tweets for {search_term}...")
 
         run_input = {
@@ -59,8 +59,7 @@ def analyze_cashtags(cashtags):
         try:
             run = client.actor("61RPP7dywgiy0JPD0").call(run_input=run_input)
 
-            sentiment_scores = []
-            bullishness_scores = []  # Track bullishness percentages
+            bullishness_scores = []  # Store rounded bullishness percentages
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 raw_tweet = item.get("text", "").strip()
                 tweet_text = preprocess_tweet(raw_tweet)
@@ -68,16 +67,16 @@ def analyze_cashtags(cashtags):
                 if not is_relevant_tweet(tweet_text):
                     continue
 
-                # Log the preprocessed tweet for debugging
-                print(f"Processed Tweet: {tweet_text}")
-
+                # Calculate bullishness and append rounded value
                 sentiment_result = calculate_bullishness(tweet_text)
-                sentiment_scores.append(sentiment_result["bullishness_percentage"])
-                bullishness_scores.append(sentiment_result["bullishness_percentage"])
+                rounded_score = round(sentiment_result["bullishness_percentage"], 2)
+                bullishness_scores.append(rounded_score)
 
-            if sentiment_scores:
-                average_bullishness = sum(bullishness_scores) / len(bullishness_scores)
-                overall_sentiments[cashtag] = f"{round(average_bullishness, 2)}% bullish"
+            if bullishness_scores:
+                # Compute final average
+                average_bullishness = round(sum(bullishness_scores) / len(bullishness_scores), 2)
+                # Use f-string formatting for consistent decimal places
+                overall_sentiments[cashtag] = f"{average_bullishness:.2f}% bullish"
             else:
                 overall_sentiments[cashtag] = "No tweets found"
 

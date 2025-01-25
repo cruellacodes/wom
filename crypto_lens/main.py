@@ -18,7 +18,7 @@ def main():
         return
 
     # Extract and deduplicate cashtags
-    cashtags = list(set(f"${token['token_symbol']}" for token in tokens if token.get("token_symbol")))
+    cashtags = list(set(f"${token['token_symbol'].strip('$')}" for token in tokens if token.get("token_symbol")))
     print(f"Found unique cashtags: {cashtags}")
 
     # Step 2: Perform sentiment analysis on Twitter
