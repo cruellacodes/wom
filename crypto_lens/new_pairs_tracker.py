@@ -1,121 +1,68 @@
-import requests
-import logging
-from typing import List, Dict
-import datetime as dt
+import os
+from apify_client import ApifyClient
+from dotenv import load_dotenv
 
-# Constants
-FETCH_API_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
-SEARCH_API_URL = "https://api.dexscreener.com/latest/dex/search"
-CHAIN_ID = "solana"  
-MIN_MARKET_CAP = 100_000  # Minimum market cap in USD
-HEADERS = {"User-Agent": "DexScreenerBot"}  
+# Load environment variables
+load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# Get the API token from the environment
+api_token = os.getenv("APIFY_API_TOKEN")
+if not api_token:
+    raise ValueError("Apify API token not found in environment variables!")
 
+# Initialize the Apify client with the token
+client = ApifyClient(api_token)
 
-def fetch_latest_tokens() -> List[Dict]:
-    """Fetch the latest tokens from the API."""
-    logging.info("Fetching latest tokens...")
-    response = requests.get(FETCH_API_URL, headers=HEADERS)
+# Prepare the Actor input
+run_input = {
+    "chainName": "solana",
+    "filterArgs": [
+        "?rankBy=trendingScoreH6&order=desc&minLiq=100000&minMarketCap=250000&min12HVol=200000"
+    ],
+    "fromPage": 1,
+    "toPage": 1,
+}
 
-    if response.status_code != 200:
-        logging.error(f"Failed to fetch tokens. Status Code: {response.status_code}")
-        return []
+# Run the Actor and wait for it to finish
+run = client.actor("GWfH8uzlNFz2fEjKj").call(run_input=run_input)
 
-    tokens = response.json()
-    logging.info(f"Fetched {len(tokens)} tokens.")
-    return tokens
+# Filter criteria
+MIN_MAKERS = 500
+MIN_VOLUME = 200_000
+MIN_MARKET_CAP = 250_000
+MIN_LIQUIDITY = 100_000
+MIN_AGE = 1  # Minimum age in hours
+MAX_AGE = 24  # Maximum age in hours
 
+# Process and filter results
+print("Filtered Tokens:")
+for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+    token_name = item.get("tokenName", "Unknown")
+    token_symbol = item.get("tokenSymbol", "Unknown").split("\n")[-1].strip()  # Trim and take the last word
+    price = item.get("priceUsd", 0)
+    age = item.get("age", None)  # Age in hours
+    transaction_count = item.get("transactionCount", 0)
+    volume_usd = item.get("volumeUsd", 0)
+    maker_count = item.get("makerCount", 0)
+    liquidity_usd = item.get("liquidityUsd", 0)
+    market_cap_usd = item.get("marketCapUsd", 0)
+    address = item.get("address", "N/A")
 
-def search_token_pairs(token_address: str) -> List[Dict]:
-    """Search for token pairs by token address."""
-    logging.info(f"Searching pairs for token: {token_address}...")
-    response = requests.get(f"{SEARCH_API_URL}?q={token_address}", headers=HEADERS)
-
-    if response.status_code != 200:
-        logging.error(f"Failed to search pairs for {token_address}. Status Code: {response.status_code}")
-        return []
-
-    data = response.json()
-    return data.get("pairs", [])
-
-
-def filter_and_display(tokens: List[Dict]) -> List[Dict]:
-    """Filter tokens based on criteria and return results."""
-    logging.info("Filtering tokens based on criteria...")
-    results = []
-
-    for token in tokens:
-        token_address = token.get("tokenAddress")
-        if not token_address:
-            logging.warning("Token missing `tokenAddress`. Skipping...")
-            continue
-
-        # Fetch pair information
-        pairs = search_token_pairs(token_address)
-        for pair in pairs:
-            chain_id = pair.get("chainId")
-            market_cap = pair.get("marketCap", 0)
-            liquidity_usd = pair.get("liquidity", {}).get("usd", 0)
-            pair_url = pair.get("url")
-            base_token = pair.get("baseToken", {})
-            created_at_timestamp = pair.get("pairCreatedAt")
-
-            # Validate and format `created_at`
-            try:
-                created_at = (
-                    dt.datetime.utcfromtimestamp(created_at_timestamp / 1000).strftime("%Y-%m-%d %H:%M:%S UTC")
-                    if created_at_timestamp and created_at_timestamp > 0
-                    else "Unknown"
-                )
-            except (TypeError, ValueError, OSError):
-                logging.warning(f"Invalid `pairCreatedAt` value: {created_at_timestamp}. Skipping...")
-                created_at = "Unknown"
-
-            # Apply filters
-            if chain_id == CHAIN_ID and market_cap >= MIN_MARKET_CAP:
-                results.append({
-                    "token_name": base_token.get("name"),
-                    "token_symbol": base_token.get("symbol"),
-                    "market_cap": market_cap,
-                    "liquidity_usd": liquidity_usd,
-                    "url": pair_url,
-                    "created_at": created_at,
-                })
-
-    # Display results
-    if results:
-        logging.info(f"Found {len(results)} tokens matching criteria.")
-        for result in results:
-            logging.info(
-                f"\n[INFO] \n"
-                f"Token: {result['token_name']} (${result['token_symbol']})\n"
-                f"Market Cap: ${result['market_cap']:,}\n"
-                f"Liquidity (USD): ${result['liquidity_usd']:,}\n"
-                f"URL: {result['url']}\n"
-                f"Created At: {result['created_at']}\n"
-            )
-    else:
-        logging.info("No tokens matched the criteria.")
-
-    return results  # Return filtered tokens
-
-
-def main() -> List[Dict]:
-    """Main function to fetch and filter tokens."""
-    tokens = fetch_latest_tokens()
-    if tokens:
-        return filter_and_display(tokens)
-    return []
-
-
-if __name__ == "__main__":
-    # Execute the tracker
-    new_pairs = main()
-    if new_pairs:
-        print("\nNew Token Pairs:")
-        for pair in new_pairs:
-            print(f"Token: {pair['token_name']} (${pair['token_symbol']})")
-    else:
-        print("No new token pairs found.")
+    # Apply filtering criteria
+    if (
+        age is not None and MIN_AGE <= age <= MAX_AGE  # Filter by age
+        and maker_count >= MIN_MAKERS
+        and volume_usd >= MIN_VOLUME
+        and market_cap_usd >= MIN_MARKET_CAP
+        and liquidity_usd >= MIN_LIQUIDITY
+    ):
+        # Print tokens that meet the criteria
+        print(f"Token: {token_name}")
+        print(f"Address: {address}")
+        print(f"Price (USD): ${price:.4f}")
+        print(f"Age (hours): {age}")
+        print(f"Transactions: {transaction_count}")
+        print(f"Volume (USD): ${volume_usd:,}")
+        print(f"Maker Count: {maker_count}")
+        print(f"Liquidity (USD): ${liquidity_usd:,}")
+        print(f"Market Cap (USD): ${market_cap_usd:,}\n")
