@@ -13,55 +13,90 @@ if not api_token:
 # Initialize the Apify client with the token
 client = ApifyClient(api_token)
 
-# Prepare the Actor input
-run_input = {
-    "chainName": "solana",
-    "filterArgs": [
-        "?rankBy=trendingScoreH6&order=desc&minLiq=100000&minMarketCap=250000&min12HVol=200000"
-    ],
-    "fromPage": 1,
-    "toPage": 1,
-}
 
-# Run the Actor and wait for it to finish
-run = client.actor("GWfH8uzlNFz2fEjKj").call(run_input=run_input)
+def extract_and_format_symbol(token_symbol_raw):
+    """
+    Extract the token symbol and format it as a cashtag.
+    Args:
+        token_symbol_raw (str): Raw tokenSymbol string, e.g., '#1 GRNLD / SOL Hi Greenland 11500'.
+    Returns:
+        str: Formatted token symbol, e.g., '$GRNLD'.
+    """
+    try:
+        # Split by spaces, get the second word (index 1), and add the cashtag prefix
+        symbol = token_symbol_raw.split(" ")[1].strip()
+        return f"${symbol}"
+    
+    except (IndexError, AttributeError):
+        return "$Unknown"
 
-# Filter criteria
-MIN_MAKERS = 500
-MIN_VOLUME = 200_000
-MIN_MARKET_CAP = 250_000
-MIN_LIQUIDITY = 100_000
-MAX_AGE = 24  # Maximum age in hours
 
-# Process and filter results
-print("Filtered Tokens:")
-for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-    token_name = item.get("tokenName", "Unknown")
-    token_symbol = item.get("tokenSymbol", "Unknown").split()[0].strip()  # Extract the first word
-    price = item.get("priceUsd", 0)
-    age = item.get("age", None)  # Age in hours
-    transaction_count = item.get("transactionCount", 0)
-    volume_usd = item.get("volumeUsd", 0)
-    maker_count = item.get("makerCount", 0)
-    liquidity_usd = item.get("liquidityUsd", 0)
-    market_cap_usd = item.get("marketCapUsd", 0)
-    address = item.get("address", "N/A")
+def get_filtered_pairs():
+    """
+    Fetch tokens from Apify, filter them based on the criteria, and return the filtered pairs.
+    Returns:
+        List[Dict]: A list of filtered tokens.
+    """
+    # Prepare the Actor input
+    run_input = {
+        "chainName": "solana",
+        "filterArgs": [
+            "?rankBy=trendingScoreH6&order=desc&minLiq=100000&minMarketCap=250000&min12HVol=200000"
+        ],
+        "fromPage": 1,
+        "toPage": 1,
+    }
 
-    # Apply filtering criteria
-    if (
-        age is not None and age <= MAX_AGE  # Filter by age
-        and maker_count >= MIN_MAKERS
-        and volume_usd >= MIN_VOLUME
-        and market_cap_usd >= MIN_MARKET_CAP
-        and liquidity_usd >= MIN_LIQUIDITY
-    ):
-        # Print tokens that meet the criteria
-        print(f"Token: {token_name} ({token_symbol})")
-        print(f"Address: {address}")
-        print(f"Price (USD): ${price:.4f}")
-        print(f"Age (hours): {age}")
-        print(f"Transactions: {transaction_count}")
-        print(f"Volume (USD): ${volume_usd:,}")
-        print(f"Maker Count: {maker_count}")
-        print(f"Liquidity (USD): ${liquidity_usd:,}")
-        print(f"Market Cap (USD): ${market_cap_usd:,}\n")
+    # Run the Actor and wait for it to finish
+    run = client.actor("GWfH8uzlNFz2fEjKj").call(run_input=run_input)
+
+    # Filter criteria
+    MIN_MAKERS = 500
+    MIN_VOLUME = 200_000
+    MIN_MARKET_CAP = 250_000
+    MIN_LIQUIDITY = 100_000
+    MAX_AGE = 24  # hours
+
+    # Process and filter results
+    filtered_tokens = []
+    for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+        token_name = item.get("tokenName", "Unknown")
+        token_symbol_raw = item.get("tokenSymbol", "Unknown")
+
+        # Debugging: Print raw token name and token symbol before formatting
+        print(f"Raw Token Name: {token_name}, Raw Token Symbol: {token_symbol_raw}")
+
+        # Format the token symbol
+        token_symbol = extract_and_format_symbol(token_symbol_raw)
+
+        # Debugging: Print token symbol after formatting
+        print(f"Formatted Token Symbol: {token_symbol}")
+
+        age = item.get("age", None)  # Age in hours
+        volume_usd = item.get("volumeUsd", 0)
+        maker_count = item.get("makerCount", 0)
+        liquidity_usd = item.get("liquidityUsd", 0)
+        market_cap_usd = item.get("marketCapUsd", 0)
+        address = item.get("address", "N/A")
+
+        # Apply filtering criteria
+        if (
+            age is not None and age <= MAX_AGE
+            and maker_count >= MIN_MAKERS
+            and volume_usd >= MIN_VOLUME
+            and market_cap_usd >= MIN_MARKET_CAP
+            and liquidity_usd >= MIN_LIQUIDITY
+        ):
+            # Add the token to the filtered list
+            filtered_tokens.append({
+                "token_name": token_name,
+                "token_symbol": token_symbol,
+                "address": address,
+                "age_hours": age,
+                "volume_usd": volume_usd,
+                "maker_count": maker_count,
+                "liquidity_usd": liquidity_usd,
+                "market_cap_usd": market_cap_usd,
+            })
+
+    return filtered_tokens
