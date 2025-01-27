@@ -19,14 +19,22 @@ def extract_and_format_symbol(token_symbol_raw):
     Extract the token symbol and format it as a cashtag.
     Handles various inconsistent formats in the tokenSymbol field.
     Args:
-        token_symbol_raw (str): Raw tokenSymbol string, e.g., '#1 GRNLD / SOL Hi Greenland 11500'.
+        token_symbol_raw (str): Raw tokenSymbol string, e.g., '#24 DLMM TRUMP / USDC OFFICIAL TRUMP'.
     Returns:
-        str: Formatted token symbol, e.g., '$GRNLD'.
+        str: Formatted token symbol, e.g., '$TRUMP'.
     """
     try:
-        # Split the string by line breaks and spaces, clean up, and find the symbol
-        parts = token_symbol_raw.split("\n")[1].split(" ")[0].strip()
-        return f"${parts}" if parts else "$Unknown"
+        # Split the string by spaces and line breaks
+        parts = token_symbol_raw.split()
+        
+        # Check for DLMM or CLMM prefixes and skip them
+        if len(parts) > 1 and parts[1] in ["DLMM", "CLMM"]:
+            symbol = parts[2] 
+        else:
+            symbol = parts[1] 
+        
+        # Add cashtag and return
+        return f"${symbol.strip()}"
     except (IndexError, AttributeError):
         return "$Unknown"
 
@@ -34,7 +42,7 @@ def extract_and_format_symbol(token_symbol_raw):
 
 def get_filtered_pairs():
     """
-    Fetch tokens from Apify, filter them based on the criteria, and return the filtered pairs.
+    Fetch tokens from Apify, filter them based on the criteria, and return unique filtered pairs.
     Returns:
         List[Dict]: A list of filtered tokens.
     """
@@ -60,6 +68,8 @@ def get_filtered_pairs():
 
     # Process and filter results
     filtered_tokens = []
+    unique_symbols = set()  # Track unique symbols
+
     for item in client.dataset(run["defaultDatasetId"]).iterate_items():
         token_name = item.get("tokenName", "Unknown")
         token_symbol_raw = item.get("tokenSymbol", "Unknown")
@@ -82,16 +92,18 @@ def get_filtered_pairs():
             and market_cap_usd >= MIN_MARKET_CAP
             and liquidity_usd >= MIN_LIQUIDITY
         ):
-            # Add the token to the filtered list
-            filtered_tokens.append({
-                "token_name": token_name,
-                "token_symbol": token_symbol,
-                "address": address,
-                "age_hours": age,
-                "volume_usd": volume_usd,
-                "maker_count": maker_count,
-                "liquidity_usd": liquidity_usd,
-                "market_cap_usd": market_cap_usd,
-            })
+            # Check if the symbol is unique
+            if token_symbol not in unique_symbols:
+                unique_symbols.add(token_symbol)  # Mark symbol as seen
+                filtered_tokens.append({
+                    "token_name": token_name,
+                    "token_symbol": token_symbol,
+                    "address": address,
+                    "age_hours": age,
+                    "volume_usd": volume_usd,
+                    "maker_count": maker_count,
+                    "liquidity_usd": liquidity_usd,
+                    "market_cap_usd": market_cap_usd,
+                })
 
     return filtered_tokens
