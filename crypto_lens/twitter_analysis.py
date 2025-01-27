@@ -36,55 +36,21 @@ def calculate_bullishness(tweet_text):
 
 
 def analyze_cashtags(cashtags):
-    """
-    Analyze sentiment for a list of cashtags using different actors
-    based on the length of the search term.
-    """
+    """Analyze sentiment for a list of cashtags."""
     data = []
 
     for cashtag in cashtags:
-        # Determine search term (remove $ prefix for querying)
-        search_term = cashtag[1:]
+        search_term = cashtag[1:] if len(cashtag) > 6 else cashtag
 
-        # Select appropriate actor based on search term length
-        if len(search_term) <= 6:
-            # Use the shorter actor (wHootRXb00ztxCELq)
-            run_input = {
-                "cashtag": search_term,
-                "sentimentAnalysis": None,
-                "cookies": [
-                    "auth_token=7a0de5bb4260b62eb16615586465d03bedcd4bf9;gt=1883340780888289298;..."
-                ],
-                "sortBy": "Latest",
-                "maxItems": 10,
-                "minRetweets": 0,
-                "minLikes": 0,
-                "minReplies": 0,
-                "onlyVerifiedUsers": None,
-                "onlyBuleVerifiedUsers": None,
-            }
-            actor_id = "wHootRXb00ztxCELq"  # Actor for short search terms
-        else:
-            # Use the longer actor (bQ0LeyXn6BO51yFDY)
-            run_input = {
-                "hashtag": search_term,
-                "sentimentAnalysis": None,
-                "cookies": [
-                    "auth_token=7a0de5bb4260b62eb16615586465d03bedcd4bf9;gt=1883340780888289298;..."
-                ],
-                "sortBy": "Latest",
-                "maxItems": 10,
-                "minRetweets": 0,
-                "minLikes": 0,
-                "minReplies": 0,
-                "onlyVerifiedUsers": None,
-                "onlyBuleVerifiedUsers": None,
-            }
-            actor_id = "bQ0LeyXn6BO51yFDY"  # Actor for long search terms
+        run_input = {
+            "searchTerms": [search_term],
+            "maxItems": 50,
+            "sort": "Latest",
+            "tweetLanguage": "en",
+        }
 
         try:
-            # Run the selected actor with the appropriate input
-            run = client.actor(actor_id).call(run_input=run_input)
+            run = client.actor("61RPP7dywgiy0JPD0").call(run_input=run_input)
             bullishness_scores = []
 
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
@@ -98,19 +64,19 @@ def analyze_cashtags(cashtags):
                 author_info = item.get("author", {})
                 followers_count = author_info.get("followers", 0)
                 if followers_count < 150:
-                    continue  # Skip this tweet if follower count is too low
+                    continue  # Skip this tweet
 
-                # Calculate bullishness and store it
+
                 score = calculate_bullishness(tweet_text)
                 bullishness_scores.append(score)
 
-                # Append tweet data to the results
+                # Append tweet data
                 data.append(
                     {
                         "Cashtag": cashtag,
                         "Bullishness": score,
-                        "created_at": created_at,  
-                        "Tweet_Text": raw_tweet, 
+                        "created_at": created_at,  # Include timestamp
+                        "Tweet_Text": raw_tweet,  # Include original tweet text
                     }
                 )
 
@@ -119,9 +85,7 @@ def analyze_cashtags(cashtags):
                 avg_bullishness = round(sum(bullishness_scores) / len(bullishness_scores), 2)
                 data.append({"Cashtag": cashtag, "Bullishness": avg_bullishness})
 
-        except Exception as e:
-            print(f"Error analyzing cashtag {cashtag}: {e}")
+        except Exception:
             data.append({"Cashtag": cashtag, "Bullishness": "Error"})
 
-    # Return the results as a Pandas DataFrame
     return pd.DataFrame(data)
