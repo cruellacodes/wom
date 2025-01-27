@@ -28,7 +28,7 @@ def extract_and_format_symbol(token_symbol_raw):
         parts = token_symbol_raw.split()
         
         # Check for DLMM or CLMM prefixes and skip them
-        if len(parts) > 1 and parts[1] in ["DLMM", "CLMM"]:
+        if len(parts) > 1 and parts[1] in ["DLMM", "CLMM", "CPMM"]:
             symbol = parts[2] 
         else:
             symbol = parts[1] 

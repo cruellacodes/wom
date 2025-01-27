@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from new_pairs_tracker import get_filtered_pairs 
-from twitter_analysis import analyze_cashtags
+from twitter_analysis import analyze_cashtags, init_db
 import pandas as pd
 import subprocess
 
@@ -61,6 +61,10 @@ def main():
     """
     Main entry point for fetching, analyzing, and visualizing sentiment.
     """
+    # Step 0: Initialize the database
+    print("Initializing the database...")
+    init_db()
+
     # Fetch and analyze tokens
     results_df = fetch_and_analyze()
 
