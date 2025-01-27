@@ -60,10 +60,10 @@ def get_filtered_pairs():
     run = client.actor("GWfH8uzlNFz2fEjKj").call(run_input=run_input)
 
     # Filter criteria
-    MIN_MAKERS = 500
-    MIN_VOLUME = 200_000
-    MIN_MARKET_CAP = 250_000
-    MIN_LIQUIDITY = 100_000
+    MIN_MAKERS = 1000
+    MIN_VOLUME = 300_000
+    MIN_MARKET_CAP = 350_000
+    MIN_LIQUIDITY = 60_000
     MAX_AGE = 24  # hours
 
     # Process and filter results
