@@ -17,18 +17,19 @@ client = ApifyClient(api_token)
 def extract_and_format_symbol(token_symbol_raw):
     """
     Extract the token symbol and format it as a cashtag.
+    Handles various inconsistent formats in the tokenSymbol field.
     Args:
         token_symbol_raw (str): Raw tokenSymbol string, e.g., '#1 GRNLD / SOL Hi Greenland 11500'.
     Returns:
         str: Formatted token symbol, e.g., '$GRNLD'.
     """
     try:
-        # Split by spaces, get the second word (index 1), and add the cashtag prefix
-        symbol = token_symbol_raw.split(" ")[1].strip()
-        return f"${symbol}"
-    
+        # Split the string by line breaks and spaces, clean up, and find the symbol
+        parts = token_symbol_raw.split("\n")[1].split(" ")[0].strip()
+        return f"${parts}" if parts else "$Unknown"
     except (IndexError, AttributeError):
         return "$Unknown"
+
 
 
 def get_filtered_pairs():
@@ -63,14 +64,8 @@ def get_filtered_pairs():
         token_name = item.get("tokenName", "Unknown")
         token_symbol_raw = item.get("tokenSymbol", "Unknown")
 
-        # Debugging: Print raw token name and token symbol before formatting
-        print(f"Raw Token Name: {token_name}, Raw Token Symbol: {token_symbol_raw}")
-
         # Format the token symbol
         token_symbol = extract_and_format_symbol(token_symbol_raw)
-
-        # Debugging: Print token symbol after formatting
-        print(f"Formatted Token Symbol: {token_symbol}")
 
         age = item.get("age", None)  # Age in hours
         volume_usd = item.get("volumeUsd", 0)
