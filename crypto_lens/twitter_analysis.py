@@ -11,22 +11,21 @@ load_dotenv()
 
 # Initialize Apify Client
 api_token = os.getenv("APIFY_API_TOKEN")
+short_token = os.getenv("SHORT_TOKEN_ACTOR")
+long_token = os.getenv("LONG_TOKEN_ACTOR")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
 client = ApifyClient(api_token)
 
 # Load sentiment analysis model
-tokenizer = AutoTokenizer.from_pretrained("CryptoBERT")  # Replace with best model
+tokenizer = AutoTokenizer.from_pretrained("CryptoBERT") 
 model = AutoModelForSequenceClassification.from_pretrained("CryptoBERT")
 
-# Define Apify Actor IDs
-SHORT_TOKEN_ACTOR = "wHootRXb00ztxCELq"
-LONG_TOKEN_ACTOR = "bQ0LeyXn6BO51yFDY"
 
 def get_apify_actor(token):
     """Determine which Apify actor to use based on token length."""
-    return SHORT_TOKEN_ACTOR if len(token) <= 6 else LONG_TOKEN_ACTOR
+    return short_token if len(token) <= 6 else long_token
 
 def fetch_tweets(token):
     """Fetch latest tweets using the appropriate Apify actor."""
@@ -34,14 +33,11 @@ def fetch_tweets(token):
 
     run_input = {
         "cashtag" if len(token) <= 6 else "hashtag": token.lower().replace("$", ""),
-        "sentimentAnalysis": None,
         "sortBy": "Latest",
-        "maxItems": 10,
+        "maxItems": 50,
         "minRetweets": 0,
         "minLikes": 0,
         "minReplies": 0,
-        "onlyVerifiedUsers": None,
-        "onlyBuleVerifiedUsers": None,
     }
 
     try:
