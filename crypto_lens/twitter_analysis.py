@@ -11,42 +11,49 @@ load_dotenv()
 
 # Initialize Apify Client
 api_token = os.getenv("APIFY_API_TOKEN")
-short_token = os.getenv("SHORT_TOKEN_ACTOR")
-long_token = os.getenv("LONG_TOKEN_ACTOR")
+actor_id = os.getenv("TOKEN_ACTOR")
+cookies = os.getenv("COOKIES")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
 client = ApifyClient(api_token)
 
 # Load sentiment analysis model
-tokenizer = AutoTokenizer.from_pretrained("CryptoBERT") 
-model = AutoModelForSequenceClassification.from_pretrained("CryptoBERT")
+MODEL_NAME = "ElKulako/cryptobert"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
-
-def get_apify_actor(token):
-    """Determine which Apify actor to use based on token length."""
-    return short_token if len(token) <= 6 else long_token
 
 def fetch_tweets(token):
-    """Fetch latest tweets using the appropriate Apify actor."""
-    actor_id = get_apify_actor(token)
+    """Fetch latest tweets using the Apify actor"""
 
+    # Determine the search term format
+    search_value = token.lower().replace("$", "")
+    search_term = f"${search_value}" if len(token) <= 6 else f"#{search_value}"
+
+    # Prepare the Actor input
     run_input = {
-        "cashtag" if len(token) <= 6 else "hashtag": token.lower().replace("$", ""),
+        "searchTerms": [search_term],  # Dynamically use $TOKEN or #TOKEN
         "sortBy": "Latest",
         "maxItems": 50,
         "minRetweets": 0,
         "minLikes": 0,
         "minReplies": 0,
+        "tweetLanguage": "en",  # Fetch only English tweets
     }
 
     try:
+        print(f"🚀 Fetching tweets for {token} using '{search_term}'...")
         run = client.actor(actor_id).call(run_input=run_input)
         tweets = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+
+        print(f"✅ Retrieved {len(tweets)} tweets for {token}.")
         return tweets
+
     except Exception as e:
-        print(f"Error fetching tweets for {token}: {e}")
+        print(f"❌ Error fetching tweets for {token}: {e}")
         return []
+
 
 def analyze_sentiment(text):
     """Perform sentiment analysis on a tweet."""
