@@ -3,89 +3,93 @@ import pandas as pd
 from apify_client import ApifyClient
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from scipy.special import softmax
-from utils import preprocess_tweet, is_relevant_tweet
 from dotenv import load_dotenv
+from utils import preprocess_tweet, is_relevant_tweet
 
 # Load environment variables
 load_dotenv()
 
-# Get the API token from the environment
+# Initialize Apify Client
 api_token = os.getenv("APIFY_API_TOKEN")
+short_token = os.getenv("SHORT_TOKEN_ACTOR")
+long_token = os.getenv("LONG_TOKEN_ACTOR")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
-# Initialize the Apify client with the token
 client = ApifyClient(api_token)
 
-# Load FinBERT model and tokenizer
-tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
-model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
+# Load sentiment analysis model
+tokenizer = AutoTokenizer.from_pretrained("CryptoBERT") 
+model = AutoModelForSequenceClassification.from_pretrained("CryptoBERT")
 
 
-def calculate_bullishness(tweet_text):
-    """Analyze sentiment and calculate bullishness percentage using FinBERT."""
-    inputs = tokenizer(tweet_text, return_tensors="pt", truncation=True, padding=True)
-    outputs = model(**inputs)
-    probs = softmax(outputs.logits.detach().numpy()[0])
+def get_apify_actor(token):
+    """Determine which Apify actor to use based on token length."""
+    return short_token if len(token) <= 6 else long_token
 
-    # Probabilities for bullish, neutral, and bearish
-    bullish_prob = round(probs[0] * 100, 2)
-    bearish_prob = round(probs[2] * 100, 2)
-    bullishness_score = round(bullish_prob / (bullish_prob + bearish_prob), 2)
-    return bullishness_score
+def fetch_tweets(token):
+    """Fetch latest tweets using the appropriate Apify actor."""
+    actor_id = get_apify_actor(token)
 
+    run_input = {
+        "cashtag" if len(token) <= 6 else "hashtag": token.lower().replace("$", ""),
+        "sortBy": "Latest",
+        "maxItems": 50,
+        "minRetweets": 0,
+        "minLikes": 0,
+        "minReplies": 0,
+    }
+
+    try:
+        run = client.actor(actor_id).call(run_input=run_input)
+        tweets = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+        return tweets
+    except Exception as e:
+        print(f"Error fetching tweets for {token}: {e}")
+        return []
+
+def analyze_sentiment(text):
+    """Perform sentiment analysis on a tweet."""
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    outputs = model(**inputs).logits
+    scores = softmax(outputs.detach().numpy())[0]
+    return scores[2]  # Bullishness score
 
 def analyze_cashtags(cashtags):
-    """Analyze sentiment for a list of cashtags."""
+    """Fetch tweets, analyze sentiment, and return results as a Pandas DataFrame."""
     data = []
 
-    for cashtag in cashtags:
-        search_term = cashtag[1:] if len(cashtag) > 6 else cashtag
+    for token in cashtags:
+        print(f"Fetching tweets for {token}...")
+        tweets = fetch_tweets(token)
 
-        run_input = {
-            "searchTerms": [search_term],
-            "maxItems": 50,
-            "sort": "Latest",
-            "tweetLanguage": "en",
-        }
+        if not tweets:
+            print(f"No tweets found for {token}.")
+            continue
 
-        try:
-            run = client.actor("61RPP7dywgiy0JPD0").call(run_input=run_input)
-            bullishness_scores = []
+        print(f"Analyzing {len(tweets)} tweets for {token}...")
+        bullishness_scores = []
 
-            for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-                raw_tweet = item.get("text", "").strip()
-                tweet_text = preprocess_tweet(raw_tweet)
-                created_at = item.get("createdAt")  # Extract tweet timestamp
+        for tweet in tweets:
+            raw_text = tweet.get("text", "").strip()
+            created_at = tweet.get("createdAt")
+            followers_count = tweet.get("author", {}).get("followers", 0)
 
-                if not is_relevant_tweet(tweet_text):
-                    continue
+            if not is_relevant_tweet(raw_text) or followers_count < 150:
+                continue
 
-                author_info = item.get("author", {})
-                followers_count = author_info.get("followers", 0)
-                if followers_count < 150:
-                    continue  # Skip this tweet
+            sentiment_score = analyze_sentiment(preprocess_tweet(raw_text))
+            bullishness_scores.append(sentiment_score)
 
+            data.append({
+                "Cashtag": token,
+                "Bullishness": sentiment_score,
+                "Created_At": created_at,
+                "Tweet_Text": raw_text,
+            })
 
-                score = calculate_bullishness(tweet_text)
-                bullishness_scores.append(score)
-
-                # Append tweet data
-                data.append(
-                    {
-                        "Cashtag": cashtag,
-                        "Bullishness": score,
-                        "created_at": created_at,  # Include timestamp
-                        "Tweet_Text": raw_tweet,  # Include original tweet text
-                    }
-                )
-
-            # Calculate average bullishness
-            if bullishness_scores:
-                avg_bullishness = round(sum(bullishness_scores) / len(bullishness_scores), 2)
-                data.append({"Cashtag": cashtag, "Bullishness": avg_bullishness})
-
-        except Exception:
-            data.append({"Cashtag": cashtag, "Bullishness": "Error"})
+        if bullishness_scores:
+            avg_score = sum(bullishness_scores) / len(bullishness_scores)
+            print(f"✅ {token} - Avg Bullishness Score: {avg_score:.2f}")
 
     return pd.DataFrame(data)
