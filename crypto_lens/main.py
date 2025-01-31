@@ -1,12 +1,14 @@
 import os
-from dotenv import load_dotenv
-from new_pairs_tracker import get_filtered_pairs 
-from twitter_analysis import analyze_cashtags, init_db
 import pandas as pd
 import subprocess
+from dotenv import load_dotenv
+from new_pairs_tracker import get_filtered_pairs
+from twitter_analysis import analyze_cashtags
 
 # Load environment variables
 load_dotenv()
+
+# Ensure API token is available
 api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
@@ -18,27 +20,28 @@ def fetch_and_analyze():
     Returns:
         pd.DataFrame: Dataframe with sentiment analysis results.
     """
-    # Step 1: Fetch filtered token pairs
-    print("Fetching filtered token pairs...")
-    tokens = get_filtered_pairs() 
+    # Step 1: Fetch filtered token pairs from DEX Screener
+    print("🔄 Fetching filtered token pairs...")
+    tokens = get_filtered_pairs()
 
     if not tokens:
-        print("No tokens found matching the criteria.")
+        print("❌ No tokens found matching the criteria.")
         return None
 
-    print(f"Found {len(tokens)} tokens matching the criteria.")
+    print(f"✅ Found {len(tokens)} tokens matching criteria.")
 
-    # Set cashtags to start sentiment analysis
-    cashtags = list(token['token_symbol'] for token in tokens)
-    print(f"Tokens to be analyzed: {cashtags}")
-    
+    # Step 2: Extract cashtags for sentiment analysis
+    cashtags = [token['token_symbol'] for token in tokens]
+    print(f"📊 Tokens for sentiment analysis: {cashtags}")
+
     if not cashtags:
-        print("No valid cashtags to analyze.")
+        print("❌ No valid cashtags to analyze.")
         return None
 
-    # Step 2: Perform sentiment analysis
-    print("\nPerforming sentiment analysis...")
+    # Step 3: Perform sentiment analysis
+    print("\n🔍 Performing sentiment analysis...")
     results_df = analyze_cashtags(cashtags)
+    
     return results_df
 
 
@@ -48,12 +51,16 @@ def launch_dashboard(results_df):
     Args:
         results_df (pd.DataFrame): Dataframe containing analyzed results.
     """
+    if results_df is None or results_df.empty:
+        print("❌ No data to display in the dashboard.")
+        return
+
     # Save the results to a temporary CSV file for the dashboard to read
     temp_file = "dashboard_data.csv"
     results_df.to_csv(temp_file, index=False)
 
-    # Launch the dashboard, passing the temporary file as input
-    print("\nLaunching the dashboard...")
+    # Launch the dashboard with the updated data
+    print("\n🚀 Launching the dashboard...")
     subprocess.run(["streamlit", "run", "dashboard.py", "--", temp_file])
 
 
@@ -61,18 +68,14 @@ def main():
     """
     Main entry point for fetching, analyzing, and visualizing sentiment.
     """
-    # Step 0: Initialize the database
-    print("Initializing the database...")
-    init_db()
-
-    # Fetch and analyze tokens
+    # Step 1: Fetch and analyze tokens
     results_df = fetch_and_analyze()
 
     if results_df is not None and not results_df.empty:
-        # Launch the dashboard with the analyzed data
+        # Step 2: Launch the dashboard with analyzed data
         launch_dashboard(results_df)
     else:
-        print("No data to display in the dashboard.")
+        print("❌ No data available for visualization.")
 
 
 if __name__ == "__main__":
