@@ -1,6 +1,10 @@
 import os
+import logging
 from apify_client import ApifyClient
 from dotenv import load_dotenv
+
+# Configure logging with a professional format
+logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
 # Load environment variables
 load_dotenv()
@@ -24,20 +28,18 @@ def extract_and_format_symbol(token_symbol_raw):
         str: Formatted token symbol, e.g., '$TRUMP'.
     """
     try:
-        # Split the string by spaces and line breaks
+        # Split the string by spaces
         parts = token_symbol_raw.split()
-        
-        # Check for DLMM or CLMM prefixes and skip them
+        # Check for DLMM, CLMM, or CPMM prefixes and skip them if present
         if len(parts) > 1 and parts[1] in ["DLMM", "CLMM", "CPMM"]:
-            symbol = parts[2] 
+            symbol = parts[2]
         else:
-            symbol = parts[1] 
-        
-        # Add cashtag and return
-        return f"${symbol.strip()}"
-    except (IndexError, AttributeError):
+            symbol = parts[1]
+        formatted_symbol = f"${symbol.strip()}"
+        return formatted_symbol
+    except (IndexError, AttributeError) as e:
+        logging.error(f"Error formatting token symbol from '{token_symbol_raw}': {e}")
         return "$Unknown"
-
 
 
 def get_filtered_pairs():
@@ -46,7 +48,7 @@ def get_filtered_pairs():
     Returns:
         List[Dict]: A list of filtered tokens.
     """
-    # Prepare the Actor input
+    
     run_input = {
         "chainName": "solana",
         "filterArgs": [
@@ -55,21 +57,23 @@ def get_filtered_pairs():
         "fromPage": 1,
         "toPage": 1,
     }
-
+    
     # Run the Actor and wait for it to finish
+    logging.info("Calling Apify Actor to fetch token data.")
     run = client.actor("GWfH8uzlNFz2fEjKj").call(run_input=run_input)
+    logging.info("Apify Actor run completed.")
 
-    # Filter criteria
+    # Filtering criteria
     MIN_MAKERS = 500
     MIN_VOLUME = 200_000
     MIN_MARKET_CAP = 250_000
     MIN_LIQUIDITY = 100_000
     MAX_AGE = 24  # hours
 
-    # Process and filter results
     filtered_tokens = []
     unique_symbols = set()  # Track unique symbols
 
+    logging.info("Processing and filtering fetched token data.")
     for item in client.dataset(run["defaultDatasetId"]).iterate_items():
         token_name = item.get("tokenName", "Unknown")
         token_symbol_raw = item.get("tokenSymbol", "Unknown")
@@ -86,15 +90,14 @@ def get_filtered_pairs():
 
         # Apply filtering criteria
         if (
-            age is not None and age <= MAX_AGE
-            and maker_count >= MIN_MAKERS
-            and volume_usd >= MIN_VOLUME
-            and market_cap_usd >= MIN_MARKET_CAP
-            and liquidity_usd >= MIN_LIQUIDITY
+            age is not None and age <= MAX_AGE and
+            maker_count >= MIN_MAKERS and
+            volume_usd >= MIN_VOLUME and
+            market_cap_usd >= MIN_MARKET_CAP and
+            liquidity_usd >= MIN_LIQUIDITY
         ):
-            # Check if the symbol is unique
             if token_symbol not in unique_symbols:
-                unique_symbols.add(token_symbol)  # Mark symbol as seen
+                unique_symbols.add(token_symbol)
                 filtered_tokens.append({
                     "token_name": token_name,
                     "token_symbol": token_symbol,
@@ -106,4 +109,5 @@ def get_filtered_pairs():
                     "market_cap_usd": market_cap_usd,
                 })
 
+    logging.info(f"Filtering complete. Total unique tokens: {len(filtered_tokens)}.")
     return filtered_tokens

@@ -26,12 +26,10 @@ def is_relevant_tweet(tweet_text):
     
     # Exclude tweets with more than 3 combined hashtags/cashtags
     if hashtag_count + cashtag_count > 3:
-        print(f"Skipping tweet due to too many hashtags/cashtags: {tweet_text}")
         return False
 
     # Exclude tweets with the rocket emoji
     if "🚀" in tweet_text:
-        print(f"Skipping tweet due to rocket emoji: {tweet_text}")
         return False
 
     # Split tweet into words
@@ -39,7 +37,6 @@ def is_relevant_tweet(tweet_text):
 
     # Ignore tweets with fewer than 3 words
     if len(words) < 3:
-        print(f"Skipping tweet due to fewer than 3 words: {tweet_text}")
         return False
 
     return True
