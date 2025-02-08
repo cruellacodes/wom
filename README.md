@@ -103,3 +103,16 @@ Sentiment analysis is a natural language processing (NLP) technique that determi
 
    ```bash
    python your_script.py
+
+
+## Frontend Integration
+
+Once sentiment analysis is complete, the aggregated sentiment data for each token is dispatched to the frontend via an API endpoint. This data can then be displayed on dashboards or leaderboards to provide real-time insights into market sentiment.
+
+## Contributing
+
+Contributions and suggestions are welcome! Please fork the repository, create a feature branch, and submit a pull request with your improvements or fixes.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

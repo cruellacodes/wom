@@ -1,6 +1,7 @@
+import asyncio
 import os
 import logging
-from apify_client import ApifyClient
+import httpx
 from dotenv import load_dotenv
 
 # Configure logging with a professional format
@@ -14,11 +15,7 @@ api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
-# Initialize the Apify client with the token
-client = ApifyClient(api_token)
-
-
-def extract_and_format_symbol(token_symbol_raw):
+async def extract_and_format_symbol(token_symbol_raw):
     """
     Extract the token symbol and format it as a cashtag.
     Handles various inconsistent formats in the tokenSymbol field.
@@ -41,14 +38,12 @@ def extract_and_format_symbol(token_symbol_raw):
         logging.error(f"Error formatting token symbol from '{token_symbol_raw}': {e}")
         return "$Unknown"
 
-
-def get_filtered_pairs():
+async def get_filtered_pairs():
     """
     Fetch tokens from Apify, filter them based on the criteria, and return unique filtered pairs.
     Returns:
         List[Dict]: A list of filtered tokens.
     """
-    
     run_input = {
         "chainName": "solana",
         "filterArgs": [
@@ -57,11 +52,6 @@ def get_filtered_pairs():
         "fromPage": 1,
         "toPage": 1,
     }
-    
-    # Run the Actor and wait for it to finish
-    logging.info("Calling Apify Actor to fetch token data.")
-    run = client.actor("GWfH8uzlNFz2fEjKj").call(run_input=run_input)
-    logging.info("Apify Actor run completed.")
 
     # Filtering criteria
     MIN_MAKERS = 500
@@ -73,41 +63,71 @@ def get_filtered_pairs():
     filtered_tokens = []
     unique_symbols = set()  # Track unique symbols
 
-    logging.info("Processing and filtering fetched token data.")
-    for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-        token_name = item.get("tokenName", "Unknown")
-        token_symbol_raw = item.get("tokenSymbol", "Unknown")
+    async with httpx.AsyncClient() as client:
+        logging.info("Calling Apify Actor to fetch token data.")
+        response = await client.post(
+            f"https://api.apify.com/v2/acts/GWfH8uzlNFz2fEjKj/runs?token={api_token}",
+            json=run_input,
+        )
+        response.raise_for_status()
+        run_id = response.json()["data"]["id"]
 
-        # Format the token symbol
-        token_symbol = extract_and_format_symbol(token_symbol_raw)
+        # Wait for the run to complete
+        while True:
+            run_status = await client.get(
+                f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
+            )
+            run_status.raise_for_status()
+            status = run_status.json()["data"]["status"]
+            if status == "SUCCEEDED":
+                break
+            elif status in ["FAILED", "TIMED_OUT", "ABORTED"]:
+                raise RuntimeError(f"Apify run failed with status: {status}")
+            await asyncio.sleep(5)  # Wait 5 seconds before checking again
 
-        age = item.get("age", None)  # Age in hours
-        volume_usd = item.get("volumeUsd", 0)
-        maker_count = item.get("makerCount", 0)
-        liquidity_usd = item.get("liquidityUsd", 0)
-        market_cap_usd = item.get("marketCapUsd", 0)
-        address = item.get("address", "N/A")
+        # Fetch the dataset items
+        dataset_id = run_status.json()["data"]["defaultDatasetId"]
+        dataset_response = await client.get(
+            f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
+        )
+        dataset_response.raise_for_status()
+        items = dataset_response.json()
 
-        # Apply filtering criteria
-        if (
-            age is not None and age <= MAX_AGE and
-            maker_count >= MIN_MAKERS and
-            volume_usd >= MIN_VOLUME and
-            market_cap_usd >= MIN_MARKET_CAP and
-            liquidity_usd >= MIN_LIQUIDITY
-        ):
-            if token_symbol not in unique_symbols:
-                unique_symbols.add(token_symbol)
-                filtered_tokens.append({
-                    "token_name": token_name,
-                    "token_symbol": token_symbol,
-                    "address": address,
-                    "age_hours": age,
-                    "volume_usd": volume_usd,
-                    "maker_count": maker_count,
-                    "liquidity_usd": liquidity_usd,
-                    "market_cap_usd": market_cap_usd,
-                })
+        logging.info("Processing and filtering fetched token data.")
+        for item in items:
+            token_name = item.get("tokenName", "Unknown")
+            token_symbol_raw = item.get("tokenSymbol", "Unknown")
+
+            # Format the token symbol
+            token_symbol = await extract_and_format_symbol(token_symbol_raw)
+
+            age = item.get("age", None)  # Age in hours
+            volume_usd = item.get("volumeUsd", 0)
+            maker_count = item.get("makerCount", 0)
+            liquidity_usd = item.get("liquidityUsd", 0)
+            market_cap_usd = item.get("marketCapUsd", 0)
+            address = item.get("address", "N/A")
+
+            # Apply filtering criteria
+            if (
+                age is not None and age <= MAX_AGE and
+                maker_count >= MIN_MAKERS and
+                volume_usd >= MIN_VOLUME and
+                market_cap_usd >= MIN_MARKET_CAP and
+                liquidity_usd >= MIN_LIQUIDITY
+            ):
+                if token_symbol not in unique_symbols:
+                    unique_symbols.add(token_symbol)
+                    filtered_tokens.append({
+                        "token_name": token_name,
+                        "token_symbol": token_symbol,
+                        "address": address,
+                        "age_hours": age,
+                        "volume_usd": volume_usd,
+                        "maker_count": maker_count,
+                        "liquidity_usd": liquidity_usd,
+                        "market_cap_usd": market_cap_usd,
+                    })
 
     logging.info(f"Filtering complete. Total unique tokens: {len(filtered_tokens)}.")
     return filtered_tokens
