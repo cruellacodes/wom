@@ -53,7 +53,7 @@ st.markdown(
 
 # Title & Header
 st.markdown("<h1 style='text-align: center;'>💹 Crypto Sentiment Dashboard</h1>", unsafe_allow_html=True)
-st.markdown("<h3 style='text-align: center;'>📊 Visualizing bullishness trends in crypto markets</h3>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align: center;'>📊 Visualizing wom trends in crypto markets</h3>", unsafe_allow_html=True)
 
 # User Token Input at the Center
 st.markdown("<h4 style='text-align: center;'>🔍 Search for a Token</h4>", unsafe_allow_html=True)
@@ -79,22 +79,22 @@ filtered_df = results_df[
 # Display Trending Pairs Title
 st.markdown("<h3 style='text-align: center;'>🔥 Hottest Trending Pairs in the Last 24 Hours</h3>", unsafe_allow_html=True)
 
-# Bullishness Bar Chart
+# wom Bar Chart
 if not results_df.empty:
     bar_chart = (
         alt.Chart(results_df)
         .mark_bar()
         .encode(
-            x=alt.X("Bullishness:Q", title="Bullishness (%)"),
+            x=alt.X("wom:Q", title="wom (%)"),
             y=alt.Y("Cashtag:N", title="Cashtag", sort="-x"),
-            color=alt.Color("Bullishness:Q", scale=alt.Scale(scheme="viridis"), legend=None),
-            tooltip=["Cashtag", "Bullishness"],
+            color=alt.Color("wom:Q", scale=alt.Scale(scheme="viridis"), legend=None),
+            tooltip=["Cashtag", "wom"],
         )
         .properties(
             width=800,
             height=400,
             background="black",
-            title="Bullishness Scores by Cashtag",
+            title="wom Scores by Cashtag",
         )
         .configure_axis(labelColor="#00FF00", titleColor="#00FF00")
         .configure_title(color="#00FF00", fontSize=16)
@@ -103,7 +103,7 @@ if not results_df.empty:
 else:
     st.warning("No valid data for bar chart.")
 
-# Timeline Chart: Bullishness Over Time
+# Timeline Chart: wom Over Time
 st.markdown("<h3 style='text-align: center;'>📈 Tweet Sentiment Over Time (Last 24 Hours)</h3>", unsafe_allow_html=True)
 if not filtered_df.empty:
     tweet_timeline_chart = (
@@ -111,15 +111,15 @@ if not filtered_df.empty:
         .mark_circle(size=80)
         .encode(
             x=alt.X("created_at:T", title="Time (Last 24 Hours)"),
-            y=alt.Y("Bullishness:Q", title="Bullishness (%)"),
+            y=alt.Y("wom:Q", title="wom (%)"),
             color=alt.Color("Cashtag:N", legend=alt.Legend(title="Cashtag")),
-            tooltip=["Cashtag", "Bullishness", "created_at"],
+            tooltip=["Cashtag", "wom", "created_at"],
         )
         .properties(
             width=800,
             height=400,
             background="black",
-            title="Bullishness Over Time (Last 24 Hours)",
+            title="wom Over Time (Last 24 Hours)",
         )
         .configure_axis(labelColor="#00FF00", titleColor="#00FF00")
         .configure_title(color="#00FF00", fontSize=16)
