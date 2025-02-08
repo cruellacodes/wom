@@ -5,11 +5,14 @@ from new_pairs_tracker import get_filtered_pairs
 from twitter_analysis import get_sentiment
 import logging
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio
+import sqlite3
+from contextlib import asynccontextmanager
+from fastapi.responses import Response
+from fastapi import Query
+from twitter_analysis import fetch_stored_tweets  # Import function
 
 # Configure logging
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
-
 
 # Load environment variables
 load_dotenv()
@@ -17,13 +20,38 @@ api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
-app = FastAPI()
+DB_PATH = "tweets.db"
 
-from fastapi.responses import Response
+def init_db():
+    """Initialize the database and create tables if they don't exist."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tweets (
+            id TEXT PRIMARY KEY,
+            token TEXT,
+            text TEXT,
+            user_name TEXT,
+            profile_pic TEXT
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+    print("Database initialized successfully.")
 
-@app.get("/favicon.ico", include_in_schema=False)
-async def ignore_favicon():
-    return Response(status_code=204)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan event to initialize the database."""
+    logging.info("Starting FastAPI App...")
+    init_db()  # Initialize DB at startup
+    yield
+    logging.info("Shutting down FastAPI App...")
+
+# Initialize FastAPI with lifespan
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +60,10 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all HTTP methods (GET, POST, etc.)
     allow_headers=["*"],  # Allows all headers
 )
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def ignore_favicon():
+    return Response(status_code=204)
 
 async def fetch_and_analyze():
     """
@@ -53,14 +85,11 @@ async def fetch_and_analyze():
         logging.info("No tokens found matching the criteria.")
         return []
 
-    # Extract token symbols (cashtags) from tokens
     cashtags = [token['token_symbol'] for token in tokens]
     logging.info(f"Tokens for sentiment analysis: {cashtags}")
 
-    # Get sentiment percentage for each token from twitter_analysis
-    sentiment_dict = await get_sentiment(cashtags)
+    sentiment_dict = await get_sentiment(cashtags, DB_PATH)
     
-    # Merge the sentiment with token details.
     final_results = []
     for token in tokens:
         ts = token.get("token_symbol")
@@ -100,4 +129,25 @@ async def get_token_sentiment():
         return results
     except Exception as e:
         logging.error(f"Error in get_token_sentiment: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+@app.get("/stored-tweets/")
+async def get_stored_tweets(token: str = Query(..., description="Token symbol")):
+    """
+    API Endpoint to fetch stored tweets for a specific token.
+
+    Args:
+        token (str): Token symbol (e.g., $ETH, $BTC).
+
+    Returns:
+        JSON: List of stored tweets.
+    """
+    try:
+        tweets = await fetch_stored_tweets(token, DB_PATH)
+        if not tweets:
+            return {"message": f"No stored tweets found for {token}"}
+        return {"token": token, "tweets": tweets}
+    except Exception as e:
+        logging.error(f"Error fetching stored tweets for {token}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
