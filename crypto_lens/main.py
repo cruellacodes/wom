@@ -1,15 +1,18 @@
+import asyncio
+import itertools
 from fastapi import FastAPI, HTTPException
 import os
 from dotenv import load_dotenv
 from new_pairs_tracker import get_filtered_pairs
 from twitter_analysis import get_sentiment
+from twitter_analysis import fetch_stored_tweets
+from twitter_analysis import fetch_tweets
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from contextlib import asynccontextmanager
 from fastapi.responses import Response
 from fastapi import Query
-from twitter_analysis import fetch_stored_tweets  # Import function
 
 # Configure logging
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -17,8 +20,14 @@ logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 # Load environment variables
 load_dotenv()
 api_token = os.getenv("APIFY_API_TOKEN")
+task_ids_str = os.getenv("WORKER_IDS")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
+if not task_ids_str:
+    raise ValueError("WORKER_IDS not set in environment variables!")
+
+# Parse task IDs
+task_ids = [tid.strip() for tid in task_ids_str.split(",") if tid.strip()]
 
 DB_PATH = "tweets.db"
 
@@ -67,12 +76,12 @@ async def ignore_favicon():
 
 async def fetch_and_analyze():
     """
-    Fetch filtered token pairs and merge with sentiment analysis results from stored tweets.
-    
+    Fetch new tokens, tweets, store them, and analyze sentiment from stored tweets.
+
     Returns:
         List[dict]: Each dictionary contains:
             - Token
-            - WomScore (sentiment percentage from stored tweets)
+            - WomScore (sentiment percentage)
             - TweetCount (total tweets stored in DB for the token)
             - MarketCap
             - Age
@@ -89,22 +98,28 @@ async def fetch_and_analyze():
     cashtags = [token['token_symbol'] for token in tokens]
     logging.info(f"Tokens for sentiment analysis: {cashtags}")
 
-    # 🔹 Analyze sentiment & count stored tweets
+    #Fetch new tweets and store them in the database
+    task_cycle = itertools.cycle(task_ids)
+    tasks = [fetch_tweets(token, next(task_cycle), DB_PATH) for token in cashtags]
+    await asyncio.gather(*tasks)  # Run all fetch tasks in parallel
+
+    #Analyze sentiment from stored tweets
     sentiment_dict = await get_sentiment(cashtags, DB_PATH)
 
+    # Merge token data with sentiment analysis results
     final_results = []
     for token in tokens:
         ts = token.get("token_symbol")
 
-        wom_score = sentiment_dict.get(ts, {}).get("wom_score", 0)  # Get stored sentiment score
-        tweet_count = sentiment_dict.get(ts, {}).get("tweet_count", 0)  # Get stored tweet count
+        wom_score = sentiment_dict.get(ts, {}).get("wom_score", 0)  # Sentiment Score
+        tweet_count = sentiment_dict.get(ts, {}).get("tweet_count", 0)  # Total stored tweets
 
         wom_score = float(wom_score) if wom_score is not None else None
 
         result = {
             "Token": ts,
-            "WomScore": wom_score,  # Sentiment Score from stored tweets
-            "TweetCount": tweet_count,  # Total stored tweets
+            "WomScore": wom_score,
+            "TweetCount": tweet_count,
             "MarketCap": token.get("market_cap_usd"),
             "Age": token.get("age_hours"),
             "Volume": token.get("volume_usd"),
@@ -112,8 +127,9 @@ async def fetch_and_analyze():
             "Liquidity": token.get("liquidity_usd"),
         }
         final_results.append(result)
-    
+
     return final_results
+
 
 
 @app.get("/tokens")
