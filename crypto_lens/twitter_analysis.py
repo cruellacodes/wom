@@ -31,9 +31,8 @@ MODEL_NAME = "ElKulako/cryptobert"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
-
 async def store_tweets(token, tweets, db_path):
-    """Store only new tweets for a token in the database asynchronously."""
+    """Store only relevant new tweets for a token in the database asynchronously."""
     if not tweets:
         logging.info(f"No new tweets to store for {token}.")
         return
@@ -44,18 +43,28 @@ async def store_tweets(token, tweets, db_path):
         new_tweets = []
         for tweet in tweets:
             tweet_id = tweet.get("id")
-            text = tweet.get("fullText", "").strip()
+            raw_text = tweet.get("fullText", "").strip()
             user_name = tweet.get("author", {}).get("userName", "")
             profile_pic = tweet.get("author", {}).get("profilePicture", "")
+            followers_count = tweet.get("author", {}).get("followers", 0)
 
-            # Check if the tweet ID already exists
-            await cursor.execute("SELECT id FROM tweets WHERE id = ?", (tweet_id,))
-            existing = await cursor.fetchone()
+            # Preprocess the tweet
+            clean_text = preprocess_tweet(raw_text)
 
-            if not existing:
-                new_tweets.append((tweet_id, token, text, user_name, profile_pic))
+            # Check if the tweet meets criteria before storing
+            if (
+                clean_text and  # Must have valid text
+                is_relevant_tweet(clean_text) and  # Must be relevant
+                followers_count >= 150  # Must have at least 150 followers
+            ):
+                # Ensure tweet ID is not already stored
+                await cursor.execute("SELECT id FROM tweets WHERE id = ?", (tweet_id,))
+                existing = await cursor.fetchone()
 
-        # Insert only new tweets and ignore duplicates
+                if not existing:
+                    new_tweets.append((tweet_id, token, clean_text, user_name, profile_pic))
+
+        # Insert only new tweets
         if new_tweets:
             try:
                 await cursor.executemany(
@@ -63,11 +72,12 @@ async def store_tweets(token, tweets, db_path):
                     new_tweets,
                 )
                 await conn.commit()
-                logging.info(f"Stored {len(new_tweets)} new tweets for {token}.")
+                logging.info(f"Stored {len(new_tweets)} new relevant tweets for {token}.")
             except Exception as e:
                 logging.error(f"Error inserting tweets into DB: {e}")
         else:
-            logging.info(f"No new tweets found for {token}.")
+            logging.info(f"No relevant tweets found for {token}.")
+
 
 
 async def update_task_input(task_id, new_input):
@@ -169,40 +179,29 @@ def analyze_sentiment(text):
 
 
 async def get_sentiment(cashtags, db_path):
-    """Fetch tweets, analyze sentiment, and return results."""
+    """Analyze sentiment using only stored tweets from the database."""
     sentiment_results = {}
-    task_cycle = itertools.cycle(task_ids)
 
-    async with httpx.AsyncClient() as client:
-        tasks = []
-        for token in cashtags:
-            task_id = next(task_cycle)
-            tasks.append(fetch_tweets(token, task_id, db_path))  # Pass db_path
+    for token in cashtags:
+        # Fetch stored tweets for the token
+        stored_tweets = await fetch_stored_tweets(token, db_path)
+        tweet_count = len(stored_tweets)  # Count tweets stored in DB
 
-        fetched_tweets = await asyncio.gather(*tasks)
+        if tweet_count == 0:
+            logging.info(f"No stored tweets found for {token}.")
+            sentiment_results[token] = {"wom_score": 0, "tweet_count": 0}
+            continue
 
-        for token, tweets in zip(cashtags, fetched_tweets):
-            if not tweets:
-                logging.info(f"No tweets found for {token}.")
-                sentiment_results[token] = 0
-                continue
+        # Perform sentiment analysis directly on stored tweets
+        wom_scores = [analyze_sentiment(tweet["text"]) for tweet in stored_tweets]
 
-            wom_scores = []
-            for tweet in tweets:
-                raw_text = tweet.get("text", "").strip()
-                followers_count = tweet.get("author", {}).get("followers", 0)
+        avg_score = sum(wom_scores) / len(wom_scores) if wom_scores else 0
 
-                if not raw_text or not is_relevant_tweet(raw_text) or followers_count < 150:
-                    continue
-                
-                sentiment_score = analyze_sentiment(preprocess_tweet(raw_text))
-                wom_scores.append(sentiment_score)
-
-            if wom_scores:
-                avg_score = sum(wom_scores) / len(wom_scores)
-                sentiment_results[token] = round(avg_score * 100, 2)
-                logging.info(f"{token} - Average Wom Score: {sentiment_results[token]:.2f}%")
-            else:
-                sentiment_results[token] = None
+        sentiment_results[token] = {
+            "wom_score": round(avg_score * 100, 2),  # Convert to percentage
+            "tweet_count": tweet_count  # Include total stored tweets
+        }
+        logging.info(f"{token} - Average Wom Score: {sentiment_results[token]['wom_score']}% (Total Tweets: {tweet_count})")
 
     return sentiment_results
+

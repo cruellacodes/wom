@@ -67,12 +67,13 @@ async def ignore_favicon():
 
 async def fetch_and_analyze():
     """
-    Fetch filtered token pairs and merge with sentiment analysis results.
+    Fetch filtered token pairs and merge with sentiment analysis results from stored tweets.
     
     Returns:
         List[dict]: Each dictionary contains:
             - Token
-            - WomScore (sentiment percentage)
+            - WomScore (sentiment percentage from stored tweets)
+            - TweetCount (total tweets stored in DB for the token)
             - MarketCap
             - Age
             - Volume
@@ -80,7 +81,7 @@ async def fetch_and_analyze():
             - Liquidity
     """
     logging.info("Fetching filtered token pairs...")
-    tokens = await get_filtered_pairs()  # Expects a list of dicts with token details
+    tokens = await get_filtered_pairs()  # Fetch token list
     if not tokens:
         logging.info("No tokens found matching the criteria.")
         return []
@@ -88,18 +89,22 @@ async def fetch_and_analyze():
     cashtags = [token['token_symbol'] for token in tokens]
     logging.info(f"Tokens for sentiment analysis: {cashtags}")
 
+    # 🔹 Analyze sentiment & count stored tweets
     sentiment_dict = await get_sentiment(cashtags, DB_PATH)
-    
+
     final_results = []
     for token in tokens:
         ts = token.get("token_symbol")
-        wom_score = round(sentiment_dict.get(ts, 0) or 0, 2)
+
+        wom_score = sentiment_dict.get(ts, {}).get("wom_score", 0)  # Get stored sentiment score
+        tweet_count = sentiment_dict.get(ts, {}).get("tweet_count", 0)  # Get stored tweet count
 
         wom_score = float(wom_score) if wom_score is not None else None
 
         result = {
             "Token": ts,
-            "WomScore": wom_score,
+            "WomScore": wom_score,  # Sentiment Score from stored tweets
+            "TweetCount": tweet_count,  # Total stored tweets
             "MarketCap": token.get("market_cap_usd"),
             "Age": token.get("age_hours"),
             "Volume": token.get("volume_usd"),
@@ -109,6 +114,7 @@ async def fetch_and_analyze():
         final_results.append(result)
     
     return final_results
+
 
 @app.get("/tokens")
 async def get_token_sentiment():
