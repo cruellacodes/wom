@@ -1,5 +1,4 @@
 import asyncio
-import itertools
 import os
 import httpx
 import logging
@@ -8,6 +7,8 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from scipy.special import softmax
 from dotenv import load_dotenv
 from utils import preprocess_tweet, is_relevant_tweet
+from datetime import datetime, timedelta, timezone
+import aiosqlite
 
 # Configure logging
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -47,6 +48,7 @@ async def store_tweets(token, tweets, db_path):
             user_name = tweet.get("author", {}).get("userName", "")
             profile_pic = tweet.get("author", {}).get("profilePicture", "")
             followers_count = tweet.get("author", {}).get("followers", 0)
+            created_at_str = tweet.get("createdAt", "")
 
             # Preprocess the tweet
             clean_text = preprocess_tweet(raw_text)
@@ -168,8 +170,6 @@ async def fetch_tweets(token, task_id, db_path):
         logging.error(f"Error fetching tweets for {token} using task {task_id}: {e}")
         return []
 
-
-
 def analyze_sentiment(text):
     """Perform sentiment analysis on a tweet using CryptoBERT."""
     inputs = tokenizer(text, return_tensors="pt", truncation=True, padding="max_length", max_length=128)
@@ -205,3 +205,31 @@ async def get_sentiment(cashtags, db_path):
 
     return sentiment_results
 
+async def fetch_tweet_volume_last_6h(token, db_path):
+    """Fetch stored tweets for a specific token and return tweet count per hour for the last 6 hours."""
+    current_time = datetime.now(timezone.utc)  # Use timezone-aware UTC datetime
+
+    # Create a dictionary to store tweet counts for each hour
+    tweet_volume = {f"Hour -{i}": 0 for i in range(6, 0, -1)}
+
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.cursor()
+
+        # Fetch all tweets from the last 6 hours
+        six_hours_ago = (current_time - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+        await cursor.execute(
+            "SELECT created_at FROM tweets WHERE token = ? AND created_at >= ? ORDER BY created_at DESC",
+            (token, six_hours_ago)
+        )
+        rows = await cursor.fetchall()
+
+    # Count tweets per hour
+    for row in rows:
+        created_at_str = row[0]
+        tweet_time = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        hours_ago = (current_time - tweet_time).seconds // 3600  # Calculate how many hours ago
+
+        if 1 <= hours_ago <= 6:
+            tweet_volume[f"Hour -{hours_ago}"] += 1  # Increment count for the respective hour
+
+    return tweet_volume  # Returns { "Hour -6": X, "Hour -5": Y, ..., "Hour -1": Z }

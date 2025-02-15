@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 import os
 from dotenv import load_dotenv
 from new_pairs_tracker import get_filtered_pairs
-from twitter_analysis import get_sentiment
+from twitter_analysis import fetch_tweet_volume_last_6h, get_sentiment
 from twitter_analysis import fetch_stored_tweets
 from twitter_analysis import fetch_tweets
 import logging
@@ -42,7 +42,8 @@ def init_db():
             token TEXT,
             text TEXT,
             user_name TEXT,
-            profile_pic TEXT
+            profile_pic TEXT,
+            created_at TEXT
         )
     """)
     
@@ -172,4 +173,22 @@ async def get_stored_tweets(token: str = Query(..., description="Token symbol"))
         return {"token": token, "tweets": tweets}
     except Exception as e:
         logging.error(f"Error fetching stored tweets for {token}: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+    
+@app.get("/tweet-volume/")
+async def get_tweet_volume(token: str = Query(..., description="Token symbol")):
+    """
+    API Endpoint to fetch tweet count per hour for the last 6 hours.
+    
+    Args:
+        token (str): Token symbol (e.g., $ETH, $BTC).
+    
+    Returns:
+        JSON: Tweet count per hour for the last 6 hours.
+    """
+    try:
+        tweet_volume = await fetch_tweet_volume_last_6h(token, DB_PATH)
+        return {"token": token, "tweet_volume": tweet_volume}
+    except Exception as e:
+        logging.error(f"Error fetching tweet volume for {token}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
