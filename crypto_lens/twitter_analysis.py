@@ -189,21 +189,25 @@ async def get_sentiment(cashtags, db_path):
 
         if tweet_count == 0:
             logging.info(f"No stored tweets found for {token}.")
-            sentiment_results[token] = {"wom_score": 0, "tweet_count": 0}
+            sentiment_results[token] = {"wom_score": 50.0, "tweet_count": 0}  # Default to neutral (50%)
             continue
 
-        # Perform sentiment analysis directly on stored tweets
+        # Perform sentiment analysis on stored tweets
         wom_scores = [analyze_sentiment(tweet["text"]) for tweet in stored_tweets]
 
-        avg_score = sum(wom_scores) / len(wom_scores) if wom_scores else 0
+        avg_score = sum(wom_scores) / len(wom_scores) if wom_scores else 1  # Neutral default (1)
+
+        # Scale from 0-2 to 0-100%
+        wom_score_percentage = round((avg_score / 2) * 100, 2)
 
         sentiment_results[token] = {
-            "wom_score": round(avg_score * 100, 2),  # Convert to percentage
-            "tweet_count": tweet_count  # Include total stored tweets
+            "wom_score": wom_score_percentage,  # Now a percentage (0-100)
+            "tweet_count": tweet_count  # Total stored tweets
         }
-        logging.info(f"{token} - Average Wom Score: {sentiment_results[token]['wom_score']}% (Total Tweets: {tweet_count})")
+        logging.info(f"{token} - WOM Score: {sentiment_results[token]['wom_score']}% (Total Tweets: {tweet_count})")
 
     return sentiment_results
+
 
 async def fetch_tweet_volume_last_6h(token, db_path):
     """Fetch stored tweets for a specific token and return tweet count per hour for the last 6 hours."""
