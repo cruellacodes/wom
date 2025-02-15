@@ -130,4 +130,5 @@ async def get_filtered_pairs():
                     })
 
     logging.info(f"Filtering complete. Total unique tokens: {len(filtered_tokens)}.")
+    
     return filtered_tokens
