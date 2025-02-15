@@ -6,7 +6,7 @@ import aiosqlite
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from scipy.special import softmax
 from dotenv import load_dotenv
-from utils import preprocess_tweet, is_relevant_tweet
+from utils import is_relevant_tweet
 from datetime import datetime, timedelta, timezone
 import aiosqlite
 
@@ -50,13 +50,10 @@ async def store_tweets(token, tweets, db_path):
             followers_count = tweet.get("author", {}).get("followers", 0)
             created_at_str = tweet.get("createdAt", "")
 
-            # Preprocess the tweet
-            clean_text = preprocess_tweet(raw_text)
-
             # Check if the tweet meets criteria before storing
             if (
-                clean_text and  # Must have valid text
-                is_relevant_tweet(clean_text) and  # Must be relevant
+                raw_text and 
+                is_relevant_tweet(raw_text) and  # Must be relevant
                 followers_count >= 150  # Must have at least 150 followers
             ):
                 # Ensure tweet ID is not already stored
@@ -64,7 +61,7 @@ async def store_tweets(token, tweets, db_path):
                 existing = await cursor.fetchone()
 
                 if not existing:
-                    new_tweets.append((tweet_id, token, clean_text, user_name, profile_pic))
+                    new_tweets.append((tweet_id, token, raw_text, user_name, profile_pic))
 
         # Insert only new tweets
         if new_tweets:
