@@ -64,9 +64,8 @@ async def get_filtered_pairs():
     unique_symbols = set()  # Track unique symbols
 
     async with httpx.AsyncClient() as client:
-        logging.info("Calling Apify Actor to fetch token data.")
         response = await client.post(
-            f"https://api.apify.com/v2/acts/GWfH8uzlNFz2fEjKj/runs?token={api_token}",
+            f"https://api.apify.com/v2/acts/crypto-scraper~dexscreener-tokens-scraper/runs?token={api_token}",
             json=run_input,
         )
         response.raise_for_status()
@@ -130,5 +129,5 @@ async def get_filtered_pairs():
                     })
 
     logging.info(f"Filtering complete. Total unique tokens: {len(filtered_tokens)}.")
-    
+
     return filtered_tokens

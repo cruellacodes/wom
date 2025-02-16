@@ -3,6 +3,7 @@ import os
 import httpx
 import logging
 import aiosqlite
+import pytz
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from scipy.special import softmax
 from dotenv import load_dotenv
@@ -48,26 +49,34 @@ async def store_tweets(token, tweets, db_path):
             user_name = tweet.get("author", {}).get("userName", "")
             profile_pic = tweet.get("author", {}).get("profilePicture", "")
             followers_count = tweet.get("author", {}).get("followers", 0)
-            created_at_str = tweet.get("createdAt", "")
+            created_at = tweet.get("createdAt", "")
+
+            try:
+                dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
+                created_at = dt.astimezone(pytz.utc).strftime("%Y-%m-%d %H:%M:%S")  # Convert to UTC
+            except Exception as e:
+                logging.error(f"Error parsing tweet timestamp: {e}")
+                created_at = None 
 
             # Check if the tweet meets criteria before storing
             if (
-                raw_text and 
                 is_relevant_tweet(raw_text) and  # Must be relevant
                 followers_count >= 150  # Must have at least 150 followers
             ):
+                wom_score = float(analyze_sentiment(raw_text)) 
+
                 # Ensure tweet ID is not already stored
                 await cursor.execute("SELECT id FROM tweets WHERE id = ?", (tweet_id,))
                 existing = await cursor.fetchone()
 
                 if not existing:
-                    new_tweets.append((tweet_id, token, raw_text, user_name, profile_pic))
+                    new_tweets.append((tweet_id, token, raw_text, user_name, followers_count, profile_pic, created_at, float(wom_score)))
 
         # Insert only new tweets
         if new_tweets:
             try:
                 await cursor.executemany(
-                    "INSERT OR IGNORE INTO tweets (id, token, text, user_name, profile_pic) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO tweets (id, token, text, user_name, followers_count, profile_pic, created_at, wom_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     new_tweets,
                 )
                 await conn.commit()
@@ -105,10 +114,21 @@ async def fetch_stored_tweets(token, db_path):
     """Fetch stored tweets for a specific token from the database."""
     async with aiosqlite.connect(db_path) as conn:
         cursor = await conn.cursor()
-        await cursor.execute("SELECT id, text, user_name, profile_pic FROM tweets WHERE token = ? ORDER BY id DESC", (token,))
+        await cursor.execute("SELECT id, text, user_name, followers_count, profile_pic, created_at, wom_score FROM tweets WHERE token = ? ORDER BY id DESC", (token,))
         rows = await cursor.fetchall()
 
-    return [{"id": row[0], "text": row[1], "user_name": row[2], "profile_pic": row[3]} for row in rows]
+    return [
+        {
+            "id": row[0],
+            "text": row[1],
+            "user_name": row[2],
+            "followers_count": row[3],
+            "profile_pic": row[4],
+            "created_at": row[5],
+            "wom_score": float(row[6]) 
+        }
+        for row in rows
+    ]
 
 
 async def fetch_tweets(token, task_id, db_path):
@@ -186,11 +206,11 @@ async def get_sentiment(cashtags, db_path):
 
         if tweet_count == 0:
             logging.info(f"No stored tweets found for {token}.")
-            sentiment_results[token] = {"wom_score": 50.0, "tweet_count": 0}  # Default to neutral (50%)
+            sentiment_results[token] = {"wom_score": 01.0, "tweet_count": 0}  # Default to neutral (1%)
             continue
 
-        # Perform sentiment analysis on stored tweets
-        wom_scores = [analyze_sentiment(tweet["text"]) for tweet in stored_tweets]
+        # get sentiment analysis on stored tweets
+        wom_scores = [tweet["wom_score"] for tweet in stored_tweets]
 
         avg_score = sum(wom_scores) / len(wom_scores) if wom_scores else 1  # Neutral default (1)
 

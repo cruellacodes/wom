@@ -41,9 +41,11 @@ def init_db():
             id TEXT PRIMARY KEY,
             token TEXT,
             text TEXT,
+            followers_count INTEGER DEFAULT 0,
             user_name TEXT,
             profile_pic TEXT,
-            created_at TEXT
+            created_at TEXT,
+            wom_score REAL
         )
     """)
     
