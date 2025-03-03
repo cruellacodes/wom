@@ -144,19 +144,33 @@ def store_tokens(tokens):
     conn.close()
     logging.info("Tokens stored in the database succesfully.")
 
-def fetch_tokens_from_db():
+import sqlite3
+
+def fetch_tokens_from_db(filtered_tokens):
     """
-    Fetch tokens from the 'tokens' table.
+    Fetch only the filtered tokens from the 'tokens' table.
     """
+    if not filtered_tokens:
+        return []  # Return empty list if no tokens to filter
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("""
+
+    token_addresses = tuple(token["address"] for token in filtered_tokens)
+
+    # Use parameterized query to prevent SQL injection
+    query = f"""
         SELECT token_symbol, token_name, address, age_hours, volume_usd, maker_count,
                liquidity_usd, market_cap_usd, dex_url, priceChange1h
         FROM tokens
-    """)
+        WHERE token_addresses IN ({",".join(["?"] * len(token_addresses))})
+    """
+
+    cursor.execute(query, token_addresses)
     rows = cursor.fetchall()
     conn.close()
+
+    # Convert fetched rows into a list of dictionaries
     tokens = []
     for row in rows:
         tokens.append({
@@ -171,7 +185,9 @@ def fetch_tokens_from_db():
             "dex_url": row[8],
             "priceChange1h": row[9]
         })
+    
     return tokens
+
 
 async def fetch_tokens():
     """
@@ -182,15 +198,17 @@ async def fetch_tokens():
         store_tokens(filtered_tokens)
     else:
         logging.info("No tokens with recent Raydium pools to store.")
+    return filtered_tokens
 
-async def fetch_and_analyze():
+
+async def fetch_and_analyze(filtered_tokens):
     """
     Fetch tokens from DB, then run tweet fetching and sentiment analysis.
     This function updates the tokens table with wom_score and tweet_count.
     """
     from twitter_analysis import get_sentiment, fetch_tweets  # Ensure these are accessible
 
-    tokens_from_db = fetch_tokens_from_db()
+    tokens_from_db = fetch_tokens_from_db(filtered_tokens)
     if not tokens_from_db:
         logging.info("No tokens available in the database.")
         return []

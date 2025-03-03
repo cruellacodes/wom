@@ -19,12 +19,12 @@ scheduler = AsyncIOScheduler()
 # This job first fetches tokens and then runs tweet fetching/sentiment analysis.
 async def scheduled_fetch():
     logging.info("Scheduled job started: Fetching tokens...")
-    await fetch_tokens()
+    filtered_tokens = await fetch_tokens()
     logging.info("Scheduled job continuing: Updating tokens and tweets...")
-    await fetch_and_analyze()
+    await fetch_and_analyze(filtered_tokens)
 
 # Schedule the job to run every 15 minutes.
-scheduler.add_job(scheduled_fetch, 'interval', minutes=15)
+scheduler.add_job(scheduled_fetch, 'interval', minutes=30)
 
 DB_PATH = "tokens.db"
 
