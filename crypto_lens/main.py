@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Query
 import os
 from dotenv import load_dotenv
@@ -20,6 +21,7 @@ scheduler = AsyncIOScheduler()
 async def scheduled_fetch():
     logging.info("Scheduled job started: Fetching tokens...")
     filtered_tokens = await fetch_tokens()
+    delete_old_tokens()
     logging.info("Scheduled job continuing: Updating tokens and tweets...")
     await fetch_and_analyze(filtered_tokens)
 
@@ -58,12 +60,26 @@ def init_db():
             dex_url TEXT,
             priceChange1h REAL,
             wom_score REAL,
-            tweet_count INTEGER
+            tweet_count INTEGER,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
     conn.close()
     logging.info("Database (tokens) initialized successfully.")
+
+def delete_old_tokens():
+    """Delete tokens that are older than 24 hours."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Calculate the cutoff time
+    cutoff_time = datetime.utc() - timedelta(hours=24)
+    
+    cursor.execute("DELETE FROM tokens WHERE age_hours >= 24")
+    conn.commit()
+    conn.close()
+    logging.info("Deleted old tokens with age_hours >= 24.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -163,7 +179,7 @@ async def get_tweet_volume_endpoint(token: str = Query(..., description="Token s
 @app.get("/trigger-fetch")
 async def trigger_fetch():
     tokens = await fetch_tokens()
-    await fetch_and_analyze()
+    await fetch_and_analyze(tokens)
     return {"message": "Fetch triggered manually", "tokens": tokens}
 
 if __name__ == "__main__":

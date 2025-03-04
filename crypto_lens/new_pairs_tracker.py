@@ -163,7 +163,7 @@ def fetch_tokens_from_db(filtered_tokens):
         SELECT token_symbol, token_name, address, age_hours, volume_usd, maker_count,
                liquidity_usd, market_cap_usd, dex_url, priceChange1h
         FROM tokens
-        WHERE token_addresses IN ({",".join(["?"] * len(token_addresses))})
+        WHERE address IN ({",".join(["?"] * len(token_addresses))})
     """
 
     cursor.execute(query, token_addresses)
