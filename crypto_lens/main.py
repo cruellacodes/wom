@@ -198,7 +198,6 @@ async def search_token(chain_id: str, token_address: str):
             raise HTTPException(status_code=500, detail="Failed to fetch token data")
 
         data = response.json()
-        print("API Response:", data) 
 
         if not isinstance(data, list) or len(data) == 0:
             raise HTTPException(status_code=404, detail="Token not found")
@@ -206,13 +205,22 @@ async def search_token(chain_id: str, token_address: str):
         # Extract the first matching token
         token_data = data[0]
 
+        # Calculate token age in hours
+        pair_created_timestamp = token_data.get("pairCreatedAt", 0)
+        if pair_created_timestamp:
+            token_age_hours = (datetime.now(timezone.utc).timestamp() - (pair_created_timestamp / 1000)) / 3600
+            token_age_hours = round(token_age_hours, 2)  # Round to 2 decimal places
+        else:
+            token_age_hours = "N/A"
+
         return {
             "symbol": token_data["baseToken"]["symbol"],
-            "name": token_data["baseToken"]["name"],
             "priceUsd": token_data["priceUsd"],
             "marketCap": token_data.get("marketCap", "N/A"),
             "liquidity": token_data["liquidity"]["usd"],
-            "volume": token_data["volume"],
+            "volume24h": token_data["volume"].get("h24", 0),  # 24-hour volume
+            "priceChange1h": token_data["priceChange"].get("h1", 0),  # 1-hour price change
+            "ageHours": token_age_hours,  # Token age in hours
             "dexUrl": token_data["url"]
         }
 
