@@ -1,7 +1,6 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Query
-import os
 from dotenv import load_dotenv
 import logging
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi.responses import Response
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from new_pairs_tracker import fetch_tokens, fetch_and_analyze, fetch_tokens_from_db
+import requests
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
@@ -25,7 +25,7 @@ async def scheduled_fetch():
     logging.info("Scheduled job continuing: Updating tokens and tweets...")
     await fetch_and_analyze(filtered_tokens)
 
-# Schedule the job to run every 15 minutes.
+# Schedule the job to run every 30 minutes.
 scheduler.add_job(scheduled_fetch, 'interval', minutes=30)
 
 DB_PATH = "tokens.db"
@@ -61,7 +61,7 @@ def init_db():
             priceChange1h REAL,
             wom_score REAL,
             tweet_count INTEGER,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
@@ -73,13 +73,12 @@ def delete_old_tokens():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Calculate the cutoff time
-    cutoff_time = datetime.utc() - timedelta(hours=24)
-    
-    cursor.execute("DELETE FROM tokens WHERE age_hours >= 24")
+    # Get the timestamp of 24 hours ago
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    cursor.execute("DELETE FROM tokens WHERE created_at <= ?", (cutoff_time,))
     conn.commit()
     conn.close()
-    logging.info("Deleted old tokens with age_hours >= 24.")
+    logging.info("Deleted old tokens created before %s.", cutoff_time)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -181,6 +180,44 @@ async def trigger_fetch():
     tokens = await fetch_tokens()
     await fetch_and_analyze(tokens)
     return {"message": "Fetch triggered manually", "tokens": tokens}
+
+
+DEX_SCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1"
+
+@app.get("/search-token/{chain_id}/{token_address}")  
+async def search_token(chain_id: str, token_address: str):
+    """
+    Fetch token details from Dex Screener API based on token address and chain ID.
+    """
+    try:
+        url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}" 
+
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail="Failed to fetch token data")
+
+        data = response.json()
+        print("API Response:", data) 
+
+        if not isinstance(data, list) or len(data) == 0:
+            raise HTTPException(status_code=404, detail="Token not found")
+
+        # Extract the first matching token
+        token_data = data[0]
+
+        return {
+            "symbol": token_data["baseToken"]["symbol"],
+            "name": token_data["baseToken"]["name"],
+            "priceUsd": token_data["priceUsd"],
+            "marketCap": token_data.get("marketCap", "N/A"),
+            "liquidity": token_data["liquidity"]["usd"],
+            "volume": token_data["volume"],
+            "dexUrl": token_data["url"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     tokens_with_sentiment = asyncio.run(fetch_and_analyze())
