@@ -1,5 +1,7 @@
 import asyncio
+import itertools
 import os
+import sqlite3
 import httpx
 import logging
 import aiosqlite
@@ -33,59 +35,40 @@ MODEL_NAME = "ElKulako/cryptobert"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
-async def store_tweets(token, tweets, db_path):
-    """Store only relevant new tweets for a token in the database asynchronously."""
-    if not tweets:
+async def store_tweets(token, processed_tweets, db_path):
+    """
+    Stores processed tweets in the database.
+
+    Args:
+        token (str): Token symbol.
+        processed_tweets (list): List of filtered and structured tweets.
+        db_path (str): Path to the database.
+
+    Returns:
+        None
+    """
+    if not processed_tweets:
         logging.info(f"No new tweets to store for {token}.")
         return
 
     async with aiosqlite.connect(db_path) as conn:
         cursor = await conn.cursor()
 
-        new_tweets = []
-        for tweet in tweets:
-            tweet_id = tweet.get("id")
-            raw_text = tweet.get("fullText", "").strip()
-            user_name = tweet.get("author", {}).get("userName", "")
-            profile_pic = tweet.get("author", {}).get("profilePicture", "")
-            followers_count = tweet.get("author", {}).get("followers", 0)
-            created_at = tweet.get("createdAt", "")
+        new_tweets = [
+            (tweet["id"], token, tweet["text"], tweet["user_name"],
+             tweet["followers_count"], tweet["profile_pic"], tweet["created_at"], tweet["wom_score"])
+            for tweet in processed_tweets
+        ]
 
-            try:
-                dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
-                created_at = dt.astimezone(pytz.utc).strftime("%Y-%m-%d %H:%M:%S")  # Convert to UTC
-            except Exception as e:
-                logging.error(f"Error parsing tweet timestamp: {e}")
-                created_at = None 
-
-            # Check if the tweet meets criteria before storing
-            if (
-                is_relevant_tweet(raw_text) and  # Must be relevant
-                followers_count >= 150  # Must have at least 150 followers
-            ):
-                wom_score = float(analyze_sentiment(raw_text)) 
-
-                # Ensure tweet ID is not already stored
-                await cursor.execute("SELECT id FROM tweets WHERE id = ?", (tweet_id,))
-                existing = await cursor.fetchone()
-
-                if not existing:
-                    new_tweets.append((tweet_id, token, raw_text, user_name, followers_count, profile_pic, created_at, float(wom_score)))
-
-        # Insert only new tweets
-        if new_tweets:
-            try:
-                await cursor.executemany(
-                    "INSERT OR IGNORE INTO tweets (id, token, text, user_name, followers_count, profile_pic, created_at, wom_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    new_tweets,
-                )
-                await conn.commit()
-                logging.info(f"Stored {len(new_tweets)} new relevant tweets for {token}.")
-            except Exception as e:
-                logging.error(f"Error inserting tweets into DB: {e}")
-        else:
-            logging.info(f"No relevant tweets found for {token}.")
-
+        try:
+            await cursor.executemany("""
+                INSERT OR IGNORE INTO tweets (id, token, text, user_name, followers_count, profile_pic, created_at, wom_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, new_tweets)
+            await conn.commit()
+            logging.info(f"Stored {len(new_tweets)} new relevant tweets for {token}.")
+        except Exception as e:
+            logging.error(f"Error inserting tweets into DB: {e}")
 
 
 async def update_task_input(task_id, new_input):
@@ -110,6 +93,7 @@ async def update_task_input(task_id, new_input):
         response.raise_for_status()
         return response.json()
     
+    
 async def fetch_stored_tweets(token, db_path):
     """Fetch stored tweets for a specific token from the database."""
     async with aiosqlite.connect(db_path) as conn:
@@ -131,8 +115,11 @@ async def fetch_stored_tweets(token, db_path):
     ]
 
 
-async def fetch_tweets(token, task_id, db_path):
-    """Fetch tweets, store only new ones, and return only new tweets."""
+async def fetch_tweets(token, task_id, store=True, db_path=None):
+    """
+    Fetch tweets using Apify. If `store=True`, store them in the DB.
+    Otherwise, return the tweets without storing.
+    """
     search_value = token.lower().replace("$", "")
     search_term = f"${search_value}" if len(token) <= 6 else f"#{search_value}"
 
@@ -177,51 +164,54 @@ async def fetch_tweets(token, task_id, db_path):
             )
             dataset_response.raise_for_status()
             fetched_tweets = dataset_response.json()
+        if fetched_tweets:
+            logging.info(f"New tweets found: {len(fetched_tweets)} for {token}")
 
-        await store_tweets(token, fetched_tweets, db_path)
-
-        logging.info(f"New tweets found: {len(fetched_tweets)} for {token}")
         return fetched_tweets
 
     except Exception as e:
         logging.error(f"Error fetching tweets for {token} using task {task_id}: {e}")
         return []
+    
 
-def analyze_sentiment(text):
+async def analyze_sentiment(text):
     """Perform sentiment analysis on a tweet using CryptoBERT."""
     inputs = tokenizer(text, return_tensors="pt", truncation=True, padding="max_length", max_length=128)
     outputs = model(**inputs).logits
     scores = softmax(outputs.detach().numpy())[0]
-    return scores[2]  # WomScore
+    return scores[2]  # WOM Score
 
 
-async def get_sentiment(cashtags, db_path):
-    """Analyze sentiment using only stored tweets from the database."""
+
+async def get_sentiment(cashtags, tweets_by_token):
+    """
+    Analyze sentiment for preprocessed tweets.
+
+    Args:
+        cashtags (list): List of token symbols.
+        tweets_by_token (dict): Processed tweets per token.
+
+    Returns:
+        dict: Sentiment scores per token.
+    """
     sentiment_results = {}
 
     for token in cashtags:
-        # Fetch stored tweets for the token
-        stored_tweets = await fetch_stored_tweets(token, db_path)
-        tweet_count = len(stored_tweets)  # Count tweets stored in DB
+        tweets = tweets_by_token.get(token, [])
 
-        if tweet_count == 0:
-            logging.info(f"No stored tweets found for {token}.")
-            sentiment_results[token] = {"wom_score": 01.0, "tweet_count": 0}  # Default to neutral (1%)
+        if not tweets:
+            logging.info(f"No tweets found for {token}. Default WOM Score applied.")
+            sentiment_results[token] = {"wom_score": 1.0, "tweet_count": 0}
             continue
 
-        # get sentiment analysis on stored tweets
-        wom_scores = [tweet["wom_score"] for tweet in stored_tweets]
-
-        avg_score = sum(wom_scores) / len(wom_scores) if wom_scores else 1  # Neutral default (1)
-
-        # Scale from 0-2 to 0-100%
-        wom_score_percentage = round((avg_score / 2) * 100, 2)
+        # Run sentiment analysis concurrently
+        wom_scores = await asyncio.gather(*(analyze_sentiment(tweet["text"]) for tweet in tweets))
+        avg_score = round((sum(wom_scores) / len(wom_scores)) * 100, 2) if wom_scores else 0
 
         sentiment_results[token] = {
-            "wom_score": wom_score_percentage,  # Now a percentage (0-100)
-            "tweet_count": tweet_count  # Total stored tweets
+            "wom_score": avg_score,
+            "tweet_count": len(tweets)
         }
-        logging.info(f"{token} - WOM Score: {sentiment_results[token]['wom_score']}% (Total Tweets: {tweet_count})")
 
     return sentiment_results
 
@@ -254,3 +244,97 @@ async def fetch_tweet_volume_last_6h(token, db_path):
             tweet_volume[f"Hour -{hours_ago}"] += 1  # Increment count for the respective hour
 
     return tweet_volume  # Returns { "Hour -6": X, "Hour -5": Y, ..., "Hour -1": Z }
+
+
+async def fetch_and_analyze(token_symbol, store=True, db_path=None):
+    """
+    Fetch tweets, process them, analyze sentiment, and store (if needed) for a single token.
+
+    Args:
+        token_symbol (str): The token symbol to analyze.
+        store (bool): Whether to store tweets in the DB (default: True).
+        db_path (str): Path to the database.
+
+    Returns:
+        dict: Analysis results including tweets and sentiment data.
+    """
+
+    logging.info(f"Fetching and analyzing tweets for {token_symbol}...")
+
+    # Step 1: Fetch tweets (DO NOT store yet)
+    task_cycle = itertools.cycle(task_ids)
+    raw_tweets = await fetch_tweets(token_symbol, next(task_cycle), store=False)
+
+    if not raw_tweets:
+        logging.info(f"No tweets found for {token_symbol}.")
+        return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
+
+    # Step 2: Process tweets (filter and clean)
+    processed_tweets = await preprocess_tweets(raw_tweets)
+
+    if not processed_tweets:
+        logging.info(f"All tweets filtered out for {token_symbol}.")
+        return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
+
+    # Step 3: Analyze sentiment
+    sentiment_dict = await get_sentiment([token_symbol], {token_symbol: processed_tweets})
+
+    # Step 4: Store results if `store=True`
+    if store and db_path:
+        await store_tweets(token_symbol, processed_tweets, db_path)
+
+    wom_score = sentiment_dict[token_symbol]["wom_score"]
+    for tweet in processed_tweets:
+        tweet["wom_score"] = wom_score
+
+
+    # Step 5: Return analysis results
+    result = {
+        "token": token_symbol,
+        "wom_score": sentiment_dict[token_symbol]["wom_score"],
+        "tweet_count": sentiment_dict[token_symbol]["tweet_count"],
+        "tweets": processed_tweets,
+    }
+    
+    logging.info(f"Completed analysis for {token_symbol}. WOM Score: {result['wom_score']}")
+    return result
+
+
+async def preprocess_tweets(raw_tweets, min_followers=150):
+    """
+    Filters and structures raw tweets.
+
+    - Removes irrelevant tweets (e.g., spam, low engagement).
+    - Extracts only useful fields.
+    - Converts timestamps to UTC.
+
+    Args:
+        raw_tweets (list): List of raw tweet data.
+        min_followers (int): Minimum followers required.
+
+    Returns:
+        list: Processed tweets.
+    """
+    processed_tweets = []
+    for tweet in raw_tweets:
+        tweet_data = {
+            "id": tweet.get("id"),
+            "text": tweet.get("fullText", "").strip(),
+            "user_name": tweet.get("author", {}).get("userName", ""),
+            "followers_count": tweet.get("author", {}).get("followers", 0),
+            "profile_pic": tweet.get("author", {}).get("profilePicture", ""),
+            "created_at": tweet.get("createdAt", ""),
+        }
+
+        # Convert timestamp
+        try:
+            dt = datetime.strptime(tweet_data["created_at"], "%a %b %d %H:%M:%S %z %Y")
+            tweet_data["created_at"] = dt.astimezone(pytz.utc).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            tweet_data["created_at"] = None
+
+        # Apply filtering criteria
+        if is_relevant_tweet(tweet_data["text"]) and tweet_data["followers_count"] >= min_followers:
+            processed_tweets.append(tweet_data)
+
+    return processed_tweets

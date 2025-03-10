@@ -8,10 +8,11 @@ import sqlite3
 from contextlib import asynccontextmanager
 from fastapi.responses import Response
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from new_pairs_tracker import fetch_tokens, fetch_and_analyze, fetch_tokens_from_db
+from twitter_analysis import analyze_sentiment, fetch_tweets, fetch_and_analyze
+from new_pairs_tracker import fetch_tokens, fetch_tokens_from_db
 import requests
 
-logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
+# logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
 
 # Create a global AsyncIOScheduler instance.
@@ -20,10 +21,15 @@ scheduler = AsyncIOScheduler()
 # This job first fetches tokens and then runs tweet fetching/sentiment analysis.
 async def scheduled_fetch():
     logging.info("Scheduled job started: Fetching tokens...")
-    filtered_tokens = await fetch_tokens()
+    tokens = await fetch_tokens()  # Get multiple tokens
     delete_old_tokens()
-    logging.info("Scheduled job continuing: Updating tokens and tweets...")
-    await fetch_and_analyze(filtered_tokens)
+    
+    logging.info("Scheduled job continuing: Analyzing tokens...")
+    tasks = [fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH) for token in tokens]
+    results = await asyncio.gather(*tasks)  # Process all tokens in parallel
+
+    logging.info(f"Scheduled job completed. Processed {len(results)} tokens.")
+    return results
 
 # Schedule the job to run every 30 minutes.
 scheduler.add_job(scheduled_fetch, 'interval', minutes=30)
@@ -178,55 +184,69 @@ async def get_tweet_volume_endpoint(token: str = Query(..., description="Token s
 @app.get("/trigger-fetch")
 async def trigger_fetch():
     tokens = await fetch_tokens()
-    await fetch_and_analyze(tokens)
-    return {"message": "Fetch triggered manually", "tokens": tokens}
+    tasks = [fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH) for token in tokens]
+    results = await asyncio.gather(*tasks)  # Process all tokens in parallel
+
+    logging.info("Manual fetching completed succesfully.")
+    return results
 
 
 DEX_SCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1"
 
-@app.get("/search-token/{chain_id}/{token_address}")  
+@app.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
     """
-    Fetch token details from Dex Screener API based on token address and chain ID.
+    Fetch token details from Dex Screener API.
+    - Return token info.
     """
     try:
-        url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}" 
-
+        url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}"
         response = requests.get(url)
 
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail="Failed to fetch token data")
 
         data = response.json()
-
-        if not isinstance(data, list) or len(data) == 0:
+        if not data or not isinstance(data, list):
             raise HTTPException(status_code=404, detail="Token not found")
 
-        # Extract the first matching token
+        # Extract token details
         token_data = data[0]
+        token_symbol = token_data["baseToken"]["symbol"]
 
         # Calculate token age in hours
         pair_created_timestamp = token_data.get("pairCreatedAt", 0)
-        if pair_created_timestamp:
-            token_age_hours = (datetime.now(timezone.utc).timestamp() - (pair_created_timestamp / 1000)) / 3600
-            token_age_hours = round(token_age_hours, 2)  # Round to 2 decimal places
-        else:
-            token_age_hours = "N/A"
+        token_age_hours = round((datetime.now(timezone.utc).timestamp() - (pair_created_timestamp / 1000)) / 3600, 2) if pair_created_timestamp else "N/A"
 
-        return {
-            "symbol": token_data["baseToken"]["symbol"],
+        # Return token details
+        token_info = {
+            "symbol": token_symbol,
             "priceUsd": token_data["priceUsd"],
             "marketCap": token_data.get("marketCap", "N/A"),
             "liquidity": token_data["liquidity"]["usd"],
-            "volume24h": token_data["volume"].get("h24", 0),  # 24-hour volume
-            "priceChange1h": token_data["priceChange"].get("h1", 0),  # 1-hour price change
-            "ageHours": token_age_hours,  # Token age in hours
-            "dexUrl": token_data["url"]
+            "volume24h": token_data["volume"].get("h24", 0),
+            "priceChange1h": token_data["priceChange"].get("h1", 0),
+            "ageHours": token_age_hours,
+            "dexUrl": token_data["url"],
         }
 
+        return token_info 
+
     except Exception as e:
+        logging.error(f"Error in search_token: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    tokens_with_sentiment = asyncio.run(fetch_and_analyze())
-    print(tokens_with_sentiment)
+@app.get("/tweets/{token_symbol}")
+async def get_tweets(token_symbol: str):
+    """
+    Fetch tweets **on demand** without storing them.
+    This is called separately after fetching token details.
+    """
+    try:
+        tweets_data = await fetch_and_analyze(token_symbol, store=False, db_path=None)
+        return {"token": token_symbol, "tweets": tweets_data}
+    
+    except Exception as e:
+        logging.error(f"Error fetching tweets for {token_symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+

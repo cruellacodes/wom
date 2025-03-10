@@ -144,8 +144,6 @@ def store_tokens(tokens):
     conn.close()
     logging.info("Tokens stored in the database succesfully.")
 
-import sqlite3
-
 def fetch_tokens_from_db(filtered_tokens):
     """
     Fetch only the filtered tokens from the 'tokens' table.
@@ -199,59 +197,3 @@ async def fetch_tokens():
     else:
         logging.info("No tokens with recent Raydium pools to store.")
     return filtered_tokens
-
-
-async def fetch_and_analyze(filtered_tokens):
-    """
-    Fetch tokens from DB, then run tweet fetching and sentiment analysis.
-    This function updates the tokens table with wom_score and tweet_count.
-    """
-    from twitter_analysis import get_sentiment, fetch_tweets  # Ensure these are accessible
-
-    tokens_from_db = fetch_tokens_from_db(filtered_tokens)
-    if not tokens_from_db:
-        logging.info("No tokens available in the database.")
-        return []
-
-    cashtags = [token['token_symbol'] for token in tokens_from_db]
-    logging.info(f"Tokens for sentiment analysis: {cashtags}")
-
-    # Fetch tweets for each token (round-robin over your task IDs)
-    import itertools
-    task_cycle = itertools.cycle(os.getenv("WORKER_IDS").split(","))
-    tweet_tasks = [fetch_tweets(token, next(task_cycle).strip(), DB_PATH) for token in cashtags]
-    await asyncio.gather(*tweet_tasks)
-
-    sentiment_dict = await get_sentiment(cashtags, DB_PATH)
-    final_results = []
-    for token in tokens_from_db:
-        ts = token.get("token_symbol")
-        wom_score = sentiment_dict.get(ts, {}).get("wom_score", 0)
-        tweet_count = sentiment_dict.get(ts, {}).get("tweet_count", 0)
-        result = {
-            "Token": ts,
-            "WomScore": float(wom_score) if wom_score is not None else None,
-            "TweetCount": tweet_count,
-            "MarketCap": token.get("market_cap_usd"),
-            "Age": token.get("age_hours"),
-            "Volume": token.get("volume_usd"),
-            "MakerCount": token.get("maker_count"),
-            "Liquidity": token.get("liquidity_usd"),
-            "DexUrl": token.get("dex_url"),
-            "priceChange1h": token.get("priceChange1h")
-        }
-        final_results.append(result)
-
-    # Update the tokens table with the sentiment values.
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    for token in final_results:
-        cursor.execute("""
-            UPDATE tokens
-            SET wom_score = ?, tweet_count = ?
-            WHERE token_symbol = ?
-        """, (token["WomScore"], token["TweetCount"], token["Token"]))
-    conn.commit()
-    conn.close()
-
-    return final_results
