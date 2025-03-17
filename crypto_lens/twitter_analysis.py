@@ -1,7 +1,7 @@
 import asyncio
 import itertools
 import os
-import sqlite3
+import aiosqlite
 import httpx
 import logging
 import aiosqlite
@@ -115,7 +115,7 @@ async def fetch_stored_tweets(token, db_path):
     ]
 
 
-async def fetch_tweets(token, task_id, store=True, db_path=None):
+async def fetch_tweets(token, task_id):
     """
     Fetch tweets using Apify. If `store=True`, store them in the DB.
     Otherwise, return the tweets without storing.
@@ -183,37 +183,52 @@ async def analyze_sentiment(text):
 
 
 
-async def get_sentiment(cashtags, tweets_by_token):
+async def get_sentiment(tweets_by_token):
     """
     Analyze sentiment for preprocessed tweets.
 
     Args:
-        cashtags (list): List of token symbols.
-        tweets_by_token (dict): Processed tweets per token.
+        tweets_by_token (dict): A dictionary where keys are token symbols and values are lists of processed tweets.
 
     Returns:
-        dict: Sentiment scores per token.
+        dict: Sentiment scores per token, including per-tweet scores.
     """
     sentiment_results = {}
 
-    for token in cashtags:
-        tweets = tweets_by_token.get(token, [])
-
+    for token, tweets in tweets_by_token.items():
         if not tweets:
             logging.info(f"No tweets found for {token}. Default WOM Score applied.")
-            sentiment_results[token] = {"wom_score": 1.0, "tweet_count": 0}
+            sentiment_results[token] = {"wom_score": 1.0, "tweet_count": 0, "tweets": []}
             continue
 
+        logging.info(f"Processing {len(tweets)} tweets for {token}")
+
         # Run sentiment analysis concurrently
-        wom_scores = await asyncio.gather(*(analyze_sentiment(tweet["text"]) for tweet in tweets))
-        avg_score = round((sum(wom_scores) / len(wom_scores)) * 100, 2) if wom_scores else 0
+        try:
+            wom_scores = await asyncio.gather(
+                *(analyze_sentiment(tweet.get("text", "")) for tweet in tweets)
+            )
+        except Exception as e:
+            logging.error(f"Sentiment analysis failed for {token}: {e}")
+            continue
+
+        wom_scores = [round(float(score) * 100, 2) for score in wom_scores]
+
+        # Attach WOM score to each tweet
+        for i, tweet in enumerate(tweets):
+            tweet["wom_score"] = wom_scores[i]
+
+        # Compute average WOM score
+        avg_score = round(sum(wom_scores) / len(wom_scores) * 100, 2) if wom_scores else 0
 
         sentiment_results[token] = {
             "wom_score": avg_score,
-            "tweet_count": len(tweets)
+            "tweet_count": len(tweets),
+            "tweets": tweets, 
         }
 
     return sentiment_results
+
 
 
 async def fetch_tweet_volume_last_6h(token, db_path):
@@ -263,36 +278,40 @@ async def fetch_and_analyze(token_symbol, store=True, db_path=None):
 
     # Step 1: Fetch tweets (DO NOT store yet)
     task_cycle = itertools.cycle(task_ids)
-    raw_tweets = await fetch_tweets(token_symbol, next(task_cycle), store=False)
+    raw_tweets = await fetch_tweets(token_symbol, next(task_cycle))
 
     if not raw_tweets:
         logging.info(f"No tweets found for {token_symbol}.")
         return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
+    
 
     # Step 2: Process tweets (filter and clean)
-    processed_tweets = await preprocess_tweets(raw_tweets)
+    processed_tweets_dict = await preprocess_tweets(raw_tweets, token_symbol)
+    processed_tweets = processed_tweets_dict.get(token_symbol, [])
+
 
     if not processed_tweets:
         logging.info(f"All tweets filtered out for {token_symbol}.")
         return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
 
     # Step 3: Analyze sentiment
-    sentiment_dict = await get_sentiment([token_symbol], {token_symbol: processed_tweets})
+    sentiment_dict = await get_sentiment(processed_tweets_dict)
+    wom_score = float(sentiment_dict[token_symbol]["wom_score"])
+    tweet_count = int(sentiment_dict[token_symbol]["tweet_count"])
+    processed_tweets = sentiment_dict[token_symbol]["tweets"]
 
     # Step 4: Store results if `store=True`
     if store and db_path:
         await store_tweets(token_symbol, processed_tweets, db_path)
 
-    wom_score = sentiment_dict[token_symbol]["wom_score"]
-    for tweet in processed_tweets:
-        tweet["wom_score"] = wom_score
+    # Step 5: Update tokens table with WOM score and tweet count
+    await update_token_data(token_symbol, wom_score, tweet_count, db_path)
 
-
-    # Step 5: Return analysis results
+    # Step 6: Return analysis results
     result = {
         "token": token_symbol,
-        "wom_score": sentiment_dict[token_symbol]["wom_score"],
-        "tweet_count": sentiment_dict[token_symbol]["tweet_count"],
+        "wom_score": wom_score,
+        "tweet_count": tweet_count,
         "tweets": processed_tweets,
     }
     
@@ -300,7 +319,7 @@ async def fetch_and_analyze(token_symbol, store=True, db_path=None):
     return result
 
 
-async def preprocess_tweets(raw_tweets, min_followers=150):
+async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
     """
     Filters and structures raw tweets.
 
@@ -337,4 +356,33 @@ async def preprocess_tweets(raw_tweets, min_followers=150):
         if is_relevant_tweet(tweet_data["text"]) and tweet_data["followers_count"] >= min_followers:
             processed_tweets.append(tweet_data)
 
-    return processed_tweets
+    return {token_symbol: processed_tweets}
+
+
+async def update_token_data(token_symbol, wom_score, tweet_count, db_path):
+    """
+    Updates the token table with WOM Score and tweet count.
+
+    Args:
+        token_symbol (str): The token symbol to update.
+        wom_score (float): The WOM score calculated from sentiment analysis.
+        tweet_count (int): The number of tweets analyzed.
+        db_path (str): Path to the SQLite database.
+    """
+    if not db_path:
+        logging.warning("Database path not provided. Skipping token update.")
+        return
+
+    query = """
+    INSERT INTO tokens (token_symbol, wom_score, tweet_count)
+    VALUES (?, ?, ?)
+    ON CONFLICT(token_symbol) DO UPDATE
+    SET wom_score = excluded.wom_score, tweet_count = excluded.tweet_count;
+    """
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(query, (token_symbol, wom_score, tweet_count))
+        await db.commit()
+
+    logging.info(f"Updated tokens table: {token_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
+

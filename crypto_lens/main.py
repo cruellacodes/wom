@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from fastapi.responses import Response
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from twitter_analysis import analyze_sentiment, fetch_tweets, fetch_and_analyze
+from twitter_analysis import fetch_and_analyze, fetch_stored_tweets
 from new_pairs_tracker import fetch_tokens, fetch_tokens_from_db
 import requests
 
@@ -161,7 +161,6 @@ async def get_tokens_details():
 @app.get("/stored-tweets/")
 async def get_stored_tweets_endpoint(token: str = Query(..., description="Token symbol")):
     try:
-        from twitter_analysis import fetch_stored_tweets
         tweets = await fetch_stored_tweets(token, DB_PATH)
         if not tweets:
             return {"message": f"No stored tweets found for {token}"}
