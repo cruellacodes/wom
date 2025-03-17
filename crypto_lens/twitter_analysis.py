@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from utils import is_relevant_tweet
 from datetime import datetime, timedelta, timezone
 import aiosqlite
+from transformers import TextClassificationPipeline
 
 # Configure logging
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -35,38 +36,39 @@ MODEL_NAME = "ElKulako/cryptobert"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
+# Initialize pipeline
+pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, return_all_scores=True)
+
 async def store_tweets(token, processed_tweets, db_path):
-    """
-    Stores processed tweets in the database.
-
-    Args:
-        token (str): Token symbol.
-        processed_tweets (list): List of filtered and structured tweets.
-        db_path (str): Path to the database.
-
-    Returns:
-        None
-    """
+    """Stores processed tweets in the database."""
     if not processed_tweets:
         logging.info(f"No new tweets to store for {token}.")
         return
 
+    logging.info(f"Attempting to store {len(processed_tweets)} tweets for {token}.")
+
     async with aiosqlite.connect(db_path) as conn:
         cursor = await conn.cursor()
 
-        new_tweets = [
-            (tweet["id"], token, tweet["text"], tweet["user_name"],
-             tweet["followers_count"], tweet["profile_pic"], tweet["created_at"], tweet["wom_score"])
-            for tweet in processed_tweets
-        ]
-
         try:
             await cursor.executemany("""
-                INSERT OR IGNORE INTO tweets (id, token, text, user_name, followers_count, profile_pic, created_at, wom_score)
+                INSERT INTO tweets (id, token, text, user_name, followers_count, profile_pic, created_at, wom_score)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, new_tweets)
+                ON CONFLICT(id) DO UPDATE 
+                SET token = excluded.token, 
+                    text = excluded.text, 
+                    user_name = excluded.user_name, 
+                    followers_count = excluded.followers_count, 
+                    profile_pic = excluded.profile_pic, 
+                    created_at = excluded.created_at, 
+                    wom_score = excluded.wom_score
+            """, [
+                (tweet["id"], token, tweet["text"], tweet["user_name"], tweet["followers_count"],
+                 tweet["profile_pic"], tweet["created_at"], tweet["wom_score"])
+                for tweet in processed_tweets
+            ])
             await conn.commit()
-            logging.info(f"Stored {len(new_tweets)} new relevant tweets for {token}.")
+            logging.info(f"Stored {len(processed_tweets)} tweets for {token}.")
         except Exception as e:
             logging.error(f"Error inserting tweets into DB: {e}")
 
@@ -175,13 +177,22 @@ async def fetch_tweets(token, task_id):
     
 
 async def analyze_sentiment(text):
-    """Perform sentiment analysis on a tweet using CryptoBERT."""
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding="max_length", max_length=128)
-    outputs = model(**inputs).logits
-    scores = softmax(outputs.detach().numpy())[0]
-    return scores[2]  # WOM Score
+    """Perform sentiment analysis on a tweet using CryptoBERT pipeline, returning a score from 0 to 2."""
+    
+    if not text:
+        return 1.0  # Default neutral score if text is empty
 
+    try:
+        preds = pipe(text)[0]  # Get scores for Bearish, Neutral, Bullish
 
+        # Compute score in range 0-2
+        sentiment_score = round((1 * preds[1]['score']) + (2 * preds[2]['score']), 2)
+
+        return sentiment_score 
+
+    except Exception as e:
+        logging.error(f"Sentiment analysis failed: {e}")
+        return 1.0  # Default to neutral if CryptoBERT fails
 
 async def get_sentiment(tweets_by_token):
     """
@@ -191,14 +202,18 @@ async def get_sentiment(tweets_by_token):
         tweets_by_token (dict): A dictionary where keys are token symbols and values are lists of processed tweets.
 
     Returns:
-        dict: Sentiment scores per token, including per-tweet scores.
+        dict: Sentiment results per token, including per-tweet scores and overall average WOM score.
     """
     sentiment_results = {}
 
     for token, tweets in tweets_by_token.items():
         if not tweets:
             logging.info(f"No tweets found for {token}. Default WOM Score applied.")
-            sentiment_results[token] = {"wom_score": 1.0, "tweet_count": 0, "tweets": []}
+            sentiment_results[token] = {
+                "wom_score": 1.0,  # Default Neutral
+                "tweet_count": 0,
+                "tweets": []
+            }
             continue
 
         logging.info(f"Processing {len(tweets)} tweets for {token}")
@@ -212,19 +227,17 @@ async def get_sentiment(tweets_by_token):
             logging.error(f"Sentiment analysis failed for {token}: {e}")
             continue
 
-        wom_scores = [round(float(score) * 100, 2) for score in wom_scores]
-
         # Attach WOM score to each tweet
         for i, tweet in enumerate(tweets):
-            tweet["wom_score"] = wom_scores[i]
+            tweet["wom_score"] = wom_scores[i]  # Keep point score (0-2)
 
         # Compute average WOM score
-        avg_score = round(sum(wom_scores) / len(wom_scores) * 100, 2) if wom_scores else 0
+        avg_score = round((sum(wom_scores) / len(wom_scores)) / 2 * 100, 2) if wom_scores else 0.1  # Default to 1%
 
         sentiment_results[token] = {
-            "wom_score": avg_score,
+            "wom_score": avg_score,  
             "tweet_count": len(tweets),
-            "tweets": tweets, 
+            "tweets": tweets
         }
 
     return sentiment_results
@@ -360,15 +373,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
 
 async def update_token_data(token_symbol, wom_score, tweet_count, db_path):
-    """
-    Updates the token table with WOM Score and tweet count.
-
-    Args:
-        token_symbol (str): The token symbol to update.
-        wom_score (float): The WOM score calculated from sentiment analysis.
-        tweet_count (int): The number of tweets analyzed.
-        db_path (str): Path to the SQLite database.
-    """
+    """Updates the token table with WOM Score and tweet count."""
     if not db_path:
         logging.warning("Database path not provided. Skipping token update.")
         return
@@ -376,8 +381,8 @@ async def update_token_data(token_symbol, wom_score, tweet_count, db_path):
     query = """
     INSERT INTO tokens (token_symbol, wom_score, tweet_count)
     VALUES (?, ?, ?)
-    ON CONFLICT(token_symbol) DO UPDATE
-    SET wom_score = excluded.wom_score, tweet_count = excluded.tweet_count;
+    ON CONFLICT(token_symbol) DO UPDATE 
+    SET wom_score = excluded.wom_score, tweet_count = excluded.tweet_count
     """
 
     async with aiosqlite.connect(db_path) as db:
@@ -385,4 +390,3 @@ async def update_token_data(token_symbol, wom_score, tweet_count, db_path):
         await db.commit()
 
     logging.info(f"Updated tokens table: {token_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
-

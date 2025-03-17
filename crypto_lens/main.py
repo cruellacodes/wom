@@ -183,10 +183,13 @@ async def get_tweet_volume_endpoint(token: str = Query(..., description="Token s
 @app.get("/trigger-fetch")
 async def trigger_fetch():
     tokens = await fetch_tokens()
-    tasks = [fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH) for token in tokens]
-    results = await asyncio.gather(*tasks)  # Process all tokens in parallel
+    results = []
 
-    logging.info("Manual fetching completed succesfully.")
+    for token in tokens:
+        result = await fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH)
+        results.append(result)  # Append result to list
+
+    logging.info("Manual fetching completed successfully.")
     return results
 
 
