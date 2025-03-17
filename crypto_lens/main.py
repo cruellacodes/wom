@@ -25,8 +25,11 @@ async def scheduled_fetch():
     delete_old_tokens()
     
     logging.info("Scheduled job continuing: Analyzing tokens...")
-    tasks = [fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH) for token in tokens]
-    results = await asyncio.gather(*tasks)  # Process all tokens in parallel
+    results = []
+
+    for token in tokens:
+        result = await fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH)
+        results.append(result)
 
     logging.info(f"Scheduled job completed. Processed {len(results)} tokens.")
     return results
