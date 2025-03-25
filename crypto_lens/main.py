@@ -190,10 +190,11 @@ async def trigger_fetch():
 
     for token in tokens:
         result = await fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH)
-        results.append(result)  # Append result to list
+        results.append(result)
 
     logging.info("Manual fetching completed successfully.")
     return results
+
 
 
 DEX_SCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1"
@@ -245,13 +246,25 @@ async def search_token(chain_id: str, token_address: str):
 async def get_tweets(token_symbol: str):
     """
     Fetch tweets **on demand** without storing them.
-    This is called separately after fetching token details.
     """
     try:
         tweets_data = await fetch_and_analyze(token_symbol, store=False, db_path=None)
-        return {"token": token_symbol, "tweets": tweets_data}
+        
+        formatted_tweets = [
+            {
+                "id": tweet.get("id"),
+                "text": tweet.get("text"),
+                "user_name": tweet.get("user_name"),
+                "followers_count": tweet.get("followers_count", 0),
+                "profile_pic": tweet.get("profile_pic", ""),
+                "created_at": tweet.get("created_at", ""),
+                "wom_score": tweet.get("wom_score", 1.0),
+            }
+            for tweet in tweets_data.get("tweets", []) 
+        ]
+
+        return {"token": token_symbol, "tweets": formatted_tweets}
     
     except Exception as e:
         logging.error(f"Error fetching tweets for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
-
