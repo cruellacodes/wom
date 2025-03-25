@@ -1,166 +1,123 @@
-# **CryptoBERT Sentiment Analysis in Cryptocurrency Markets**
+# **CryptoBERT: AI-Powered Sentiment Analysis in Crypto Markets**
 
-## **Abstract**  
-This document presents the integration of **CryptoBERT**, a specialized **AI-driven NLP model**, within a cryptocurrency sentiment analysis system. CryptoBERT leverages **deep learning** and **transformer-based language modeling** to evaluate social sentiment in crypto-related discussions. This implementation enables automated sentiment scoring of tweets, providing a structured approach to market sentiment analysis.
-
----
-
-## **1. Introduction**  
-Cryptocurrency markets are heavily influenced by **social sentiment**, where price fluctuations are often driven by community discussions on platforms like **Twitter**. Traditional financial sentiment analysis models fail to capture the unique linguistic patterns and nuances of **crypto-native language**, which often includes **memes, jargon, and slang**. 
-
-To address this, **CryptoBERT**, a deep learning model fine-tuned for cryptocurrency-related sentiment classification, is employed. This model provides probabilistic outputs for sentiment categories, which are then processed into a **quantitative sentiment score** to enable systematic and scalable sentiment tracking.
+## **Abstract**
+This document outlines the integration of **CryptoBERT**, a deep learning-based NLP model, into a cryptocurrency sentiment analysis system. By leveraging transformer architecture and crypto-specific training data, CryptoBERT provides real-time sentiment scores for tweets mentioning crypto tokens. This enables a structured, AI-driven approach to understanding market sentiment at both micro (tweet) and macro (token) levels.
 
 ---
 
-## **2. CryptoBERT: AI-Driven Sentiment Analysis**  
+## **1. Introduction**
+Crypto markets move at the speed of the internet. Price action is increasingly dictated by community chatter, memes, and hype across platforms like Twitter. However, traditional sentiment analysis tools fail to interpret the fast-changing and often chaotic language of crypto culture.
 
-### **2.1. Model Overview**  
-CryptoBERT is a **fine-tuned transformer-based model**, initially derived from **VinAI’s BERTweet-base**, which is itself an extension of **Google’s BERT** but optimized for social media text. The model has been trained specifically on **over 3.2 million cryptocurrency-related tweets**, making it **domain-adapted** for analyzing crypto discussions.
+**CryptoBERT** addresses this gap by providing a **domain-specific sentiment classifier**, trained on millions of crypto-native tweets. It understands abbreviations ("LFG", "HODL"), emojis, slang, and token tags (like `$DOGE` or `#Solana`), enabling precise classification of sentiment polarity in crypto discussions.
 
-Unlike generic sentiment analysis models, CryptoBERT incorporates **crypto-specific terminology, emojis, and linguistic trends**, enabling a **more precise classification of sentiment polarity** in this domain.
+---
 
-### **2.2. Sentiment Classification Mechanism**  
-The model is trained to classify each text into one of three sentiment categories:  
-- **Bearish (Negative)**
-- **Neutral**
-- **Bullish (Positive)**  
+## **2. AI-Powered Sentiment Modeling with CryptoBERT**
 
-These sentiment labels are assigned based on the **probabilistic output** of the model’s classification head. The final classification score is obtained by **applying softmax normalization** to the raw logits (model outputs) to produce probability distributions across the three categories.
+### **2.1. Model Architecture**
+CryptoBERT is a **transformer-based model** fine-tuned from **BERTweet-base** (developed by VinAI). It inherits the language modeling strength of Google’s BERT, adapted specifically for **social media text**.
 
-**Mathematically, this can be represented as:**  
+- **Pretrained on tweets**
+- **Fine-tuned on 3.2M crypto-tagged tweets**
+- Classifies tweets into: **Bearish**, **Neutral**, or **Bullish**
+
+---
+
+### **2.2. How the Classification Works**
+CryptoBERT uses a standard softmax layer to output probabilities for each class:
+
 \[
 P(s_i) = \frac{e^{z_i}}{\sum_{j=1}^{N} e^{z_j}}
 \]
-where **\( P(s_i) \)** is the probability of sentiment **\( s_i \)**, and **\( z_i \)** is the raw logit output from the model.
+
+Where:
+- \( P(s_i) \) = probability of sentiment class \( s_i \)
+- \( z_i \) = raw logit from the model
+- \( N \) = total number of classes (3)
+
+### **2.3. Tweet-Level Sentiment Scoring**
+To compute a numerical score from the softmax output, the system applies a **weighted sentiment scoring formula**:
+
+```python
+score = 0 * P_bearish + 1 * P_neutral + 2 * P_bullish
+```
+
+This score is normalized to the range **[0, 2]**:
+- **0** = fully Bearish
+- **1** = Neutral
+- **2** = fully Bullish
+
+#### **Example: Bullish Tweet**
+> "$PEPE just flipped $DOGE in volume. This is insane! 🚀🔥"
+
+Model output:
+```json
+[
+  {"label": "Bearish", "score": 0.03},
+  {"label": "Neutral", "score": 0.12},
+  {"label": "Bullish", "score": 0.85}
+]
+```
+
+Score = (0 × 0.03) + (1 × 0.12) + (2 × 0.85) = **1.82**
+
+#### **Example: Bearish Tweet**
+> "Looks like $BTC is heading for another crash. 👎"
+
+Model output:
+```json
+[
+  {"label": "Bearish", "score": 0.91},
+  {"label": "Neutral", "score": 0.07},
+  {"label": "Bullish", "score": 0.02}
+]
+```
+
+Score = (0 × 0.91) + (1 × 0.07) + (2 × 0.02) = **0.11**
+
+This method effectively maps sentiment into a numerical continuum without discarding bearish content. High bearish probability pushes the score closer to 0.
 
 ---
 
-## **3. Implementation in This Project**  
+## **3. Integration in This Project**
 
-### **3.1. Data Flow and Sentiment Processing**  
-This project integrates CryptoBERT to analyze tweets mentioning specific crypto tokens and quantifies sentiment at both **individual tweet level** and **aggregated token level**.
+### **3.1. Data Pipeline**
+- Tweets mentioning crypto tokens are fetched in real time.
+- Spam, bots, and non-English posts are filtered out.
+- Each tweet is processed through the CryptoBERT pipeline.
 
-#### **Step 1: Data Collection**  
-- **Tweets are fetched dynamically** using Apify API, searching for crypto token mentions.  
-- **Filtering and preprocessing** are applied to remove spam, low-engagement posts, and non-English content.  
-
-#### **Step 2: Sentiment Computation**  
-For each tweet, sentiment probabilities are retrieved using CryptoBERT’s classification pipeline:  
 ```python
-from transformers import TextClassificationPipeline
-
-# Initialize the CryptoBERT pipeline
 pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, return_all_scores=True)
 
 async def analyze_sentiment(text):
-    """Perform AI-powered sentiment analysis using CryptoBERT, returning a score between 0-2."""
-    
-    if not text:
-        return 1.0  # Default neutral score if text is empty
-
-    try:
-        preds = pipe(text)[0]  # Get probability scores for Bearish, Neutral, Bullish
-
-        # Compute sentiment score using weighted probability transformation
-        sentiment_score = round((1 * preds[1]['score']) + (2 * preds[2]['score']), 2)
-
-        return sentiment_score  
-
-    except Exception as e:
-        logging.error(f"Sentiment analysis failed: {e}")
-        return 1.0  # Default neutral score if processing fails
+    preds = pipe(text)[0]
+    return round((1 * preds[1]['score']) + (2 * preds[2]['score']), 2)
 ```
-This function ensures that each tweet is assigned a **quantitative sentiment score** in the range **\[0, 2\]**, where:  
-- **0 indicates highly bearish sentiment**  
-- **1 indicates neutral sentiment**  
-- **2 indicates highly bullish sentiment**  
 
----
-
-### **3.2. Aggregation and Market Sentiment Representation**  
-Once individual tweet scores are generated, an **aggregated score per token** is computed. This represents the **average market sentiment for a given cryptocurrency**, offering a **quantifiable measure of community optimism or pessimism**.
+### **3.2. Token-Level Aggregation (WOM Score)**
+The **WOM Score** is calculated as the average score of all tweets for a token:
 
 ```python
-async def get_sentiment(tweets_by_token):
-    """
-    Compute the AI-based aggregated sentiment for each token.
-    This function calculates both per-tweet sentiment and the overall market sentiment for a cryptocurrency.
-    """
-    sentiment_results = {}
-
-    for token, tweets in tweets_by_token.items():
-        if not tweets:
-            logging.info(f"No tweets found for {token}. Defaulting to neutral sentiment.")
-            sentiment_results[token] = {
-                "wom_score": 1.0,  # Neutral baseline
-                "tweet_count": 0,
-                "tweets": []
-            }
-            continue
-
-        logging.info(f"Processing sentiment for {len(tweets)} tweets mentioning {token}.")
-
-        # Sentiment analysis execution
-        try:
-            wom_scores = await asyncio.gather(
-                *(analyze_sentiment(tweet.get("text", "")) for tweet in tweets)
-            )
-        except Exception as e:
-            logging.error(f"Sentiment processing failed for {token}: {e}")
-            continue
-
-        # Assign WOM scores to tweets
-        for i, tweet in enumerate(tweets):
-            tweet["wom_score"] = wom_scores[i]  
-
-        # Compute the overall market sentiment as a percentage
-        avg_score = round((sum(wom_scores) / len(wom_scores)) * 100, 2) if wom_scores else 50.0  # Default neutral 50%
-
-        sentiment_results[token] = {
-            "wom_score": avg_score,  # Final market sentiment score (0-100%)
-            "tweet_count": len(tweets),
-            "tweets": tweets
-        }
-
-    return sentiment_results
+avg_score = round((sum(tweet_scores) / len(tweet_scores)) / 2 * 100, 2)
 ```
 
-In this implementation:
-- **Each tweet’s sentiment score is retained** for micro-level analysis.
-- **A token-wide sentiment score is computed**, serving as an aggregated measure of the market’s perception of that token.
+- Score is converted to a **0–100 scale**
+- Displayed on the frontend as a progress bar
+- Enables visual sentiment comparison across tokens
+
+Each tweet retains its individual `wom_score` to power micro-level scatter plots and sentiment bubbles.
 
 ---
 
-## **4. Applications and Insights**
-### **4.1. Market Sentiment as a Trading Indicator**  
-By providing a **real-time sentiment score**, this system can serve as an **early warning system for potential price movements**.  
-- **A sudden spike in bullish sentiment** → Possible price rally.  
-- **A rising bearish sentiment trend** → Potential market correction.  
+## **4. Conclusion**
+CryptoBERT enables real-time, automated understanding of market sentiment using deep learning. Its crypto-specific design ensures accurate classification of nuanced, noisy, and emotionally charged language common in DeFi and memecoin communities.
 
-### **4.2. Visualization of Market Sentiment**  
-This data is used for sentiment visualization via:  
-- **Bubble charts** (individual tweet sentiment distribution)  
-- **Progress bars** (overall token sentiment trends)  
-
-### **4.3. AI-Driven Market Monitoring**  
-By continuously tracking sentiment shifts across multiple tokens, this system can be **automated to detect extreme sentiment changes**, alerting traders and analysts in real-time.
+By converting social chatter into structured sentiment scores, this system brings clarity to chaos and empowers smarter decision-making in volatile markets.
 
 ---
 
-## **5. Conclusion and Future Work**  
-This project successfully integrates **AI-driven sentiment analysis** into cryptocurrency markets using **CryptoBERT**, enabling structured tracking of social sentiment. 
-
-Future improvements could include:  
-- **Incorporating time-series analysis** to detect sentiment trends over extended periods.  
-- **Expanding the dataset** to include more social media sources beyond Twitter.  
-- **Integrating AI-powered anomaly detection** to flag potential manipulation attempts.
-
-This work demonstrates that **AI-based sentiment analysis can serve as a valuable tool for crypto traders and analysts**, providing **quantitative insights into market psychology** in a domain that is traditionally dominated by speculation and social influence.
-
----
-
-### **References**  
-1. **Vaswani et al. (2017)**, *Attention Is All You Need*, Google Research  
-2. **VinAI Research**, *BERTweet: A pre-trained language model for English Tweets*  
-3. **Hugging Face**, *Transformers Documentation*  
-4. **ElKulako (2021)**, *CryptoBERT Model Card*  
+## **References**
+1. Vaswani et al. (2017), *Attention Is All You Need*, Google Research  
+2. VinAI Research, *BERTweet-base*  
+3. Hugging Face, *Transformers Documentation*  
+4. ElKulako (2021), *CryptoBERT Model Card*
