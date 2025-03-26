@@ -7,35 +7,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from contextlib import asynccontextmanager
 from fastapi.responses import Response
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from twitter_analysis import fetch_and_analyze, fetch_stored_tweets
 from new_pairs_tracker import fetch_tokens, fetch_tokens_from_db
 import requests
 
 # logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
-
-# Create a global AsyncIOScheduler instance.
-scheduler = AsyncIOScheduler()
-
-# This job first fetches tokens and then runs tweet fetching/sentiment analysis.
-async def scheduled_fetch():
-    logging.info("Scheduled job started: Fetching tokens...")
-    tokens = await fetch_tokens()  # Get multiple tokens
-    delete_old_tokens()
-    
-    logging.info("Scheduled job continuing: Analyzing tokens...")
-    results = []
-
-    for token in tokens:
-        result = await fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH)
-        results.append(result)
-
-    logging.info(f"Scheduled job completed. Processed {len(results)} tokens.")
-    return results
-
-# Schedule the job to run every 30 minutes.
-scheduler.add_job(scheduled_fetch, 'interval', minutes=30)
 
 DB_PATH = "tokens.db"
 
@@ -94,14 +71,11 @@ async def lifespan(app: FastAPI):
     logging.info("Starting FastAPI App...")
     init_db()  # Initialize the database.
     loop = asyncio.get_running_loop()
-    scheduler.configure(event_loop=loop)
-    scheduler.start()
     logging.info("Scheduler started.")
     try:
         yield
     finally:
         logging.info("Shutting down FastAPI App...")
-        scheduler.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 
