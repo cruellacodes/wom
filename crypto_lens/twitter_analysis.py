@@ -4,14 +4,12 @@ import os
 import aiosqlite
 import httpx
 import logging
-import aiosqlite
 import pytz
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from scipy.special import softmax
 from dotenv import load_dotenv
 from utils import is_relevant_tweet
 from datetime import datetime, timedelta, timezone
-import aiosqlite
 from transformers import TextClassificationPipeline
 
 # Configure logging
