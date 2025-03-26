@@ -37,7 +37,7 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
 # Initialize pipeline
-pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, return_all_scores=True)
+pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, top_k=None)
 
 async def store_tweets(token, processed_tweets, db_path):
     """Stores processed tweets in the database."""
@@ -195,30 +195,34 @@ async def analyze_sentiment(text):
         return 1.0  # Default to neutral if CryptoBERT fails
 
 async def get_sentiment(tweets_by_token):
-    """
-    Analyze sentiment for preprocessed tweets.
+    """Analyze sentiment for preprocessed tweets."""
+    
+    logging.debug(f"DEBUG: get_sentiment() received tweets_by_token: {type(tweets_by_token)} -> {tweets_by_token}")
 
-    Args:
-        tweets_by_token (dict): A dictionary where keys are token symbols and values are lists of processed tweets.
-
-    Returns:
-        dict: Sentiment results per token, including per-tweet scores and overall average WOM score.
-    """
     sentiment_results = {}
 
+    if not isinstance(tweets_by_token, dict):
+        logging.error(f"Unexpected data format for tweets_by_token: {type(tweets_by_token)}")
+        return sentiment_results  # Return an empty dict instead of crashing
+
     for token, tweets in tweets_by_token.items():
+        logging.debug(f"DEBUG: Processing {token}, tweets type: {type(tweets)}")
+        
+        if not isinstance(tweets, list):
+            logging.error(f"Unexpected format for tweets[{token}]: {type(tweets)} -> {tweets}")
+            continue
+
         if not tweets:
             logging.info(f"No tweets found for {token}. Default WOM Score applied.")
             sentiment_results[token] = {
-                "wom_score": 1.0,  # Default Neutral
+                "wom_score": 1.0,  
                 "tweet_count": 0,
                 "tweets": []
             }
             continue
+        
+        logging.debug(f"DEBUG: {token} has {len(tweets)} tweets before sentiment analysis.")
 
-        logging.info(f"Processing {len(tweets)} tweets for {token}")
-
-        # Run sentiment analysis concurrently
         try:
             wom_scores = await asyncio.gather(
                 *(analyze_sentiment(tweet.get("text", "")) for tweet in tweets)
@@ -227,12 +231,10 @@ async def get_sentiment(tweets_by_token):
             logging.error(f"Sentiment analysis failed for {token}: {e}")
             continue
 
-        # Attach WOM score to each tweet
         for i, tweet in enumerate(tweets):
-            tweet["wom_score"] = wom_scores[i]  # Keep point score (0-2)
+            tweet["wom_score"] = wom_scores[i]
 
-        # Compute average WOM score
-        avg_score = round((sum(wom_scores) / len(wom_scores)) / 2 * 100, 2) if wom_scores else 0.1  # Default to 1%
+        avg_score = round((sum(wom_scores) / len(wom_scores)) / 2 * 100, 2) if wom_scores else 1.0
 
         sentiment_results[token] = {
             "wom_score": avg_score,  
@@ -240,6 +242,7 @@ async def get_sentiment(tweets_by_token):
             "tweets": tweets
         }
 
+    logging.debug(f"DEBUG: get_sentiment() returning: {sentiment_results}")
     return sentiment_results
 
 
@@ -309,16 +312,28 @@ async def fetch_and_analyze(token_symbol, store=True, db_path=None):
 
     # Step 3: Analyze sentiment
     sentiment_dict = await get_sentiment(processed_tweets_dict)
-    wom_score = float(sentiment_dict[token_symbol]["wom_score"])
-    tweet_count = int(sentiment_dict[token_symbol]["tweet_count"])
-    processed_tweets = sentiment_dict[token_symbol]["tweets"]
 
+    logging.debug(f"DEBUG: Sentiment analysis results: {sentiment_dict}")
+    if not isinstance(sentiment_dict, dict) or token_symbol not in sentiment_dict:
+            logging.error(f"Unexpected sentiment data format for {token_symbol}, setting default values.")
+            return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
+
+    sentiment_data = sentiment_dict.get(token_symbol, {})
+
+    if not isinstance(sentiment_data, dict):
+        logging.error(f"Sentiment data for {token_symbol} is not a dictionary, setting default values.")
+        return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
+
+    wom_score = float(sentiment_data.get("wom_score", 1.0))
+    tweet_count = int(sentiment_data.get("tweet_count", 0))
+    processed_tweets = sentiment_data.get("tweets", [])
+    
     # Step 4: Store results if `store=True`
     if store and db_path:
         await store_tweets(token_symbol, processed_tweets, db_path)
 
-    # Step 5: Update tokens table with WOM score and tweet count
-    await update_token_data(token_symbol, wom_score, tweet_count, db_path)
+        # Step 5: Update tokens table with WOM score and tweet count
+        await update_token_data(token_symbol, wom_score, tweet_count, db_path)
 
     # Step 6: Return analysis results
     result = {
