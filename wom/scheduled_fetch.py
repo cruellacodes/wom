@@ -10,8 +10,6 @@ from main import init_db
 import os
 
 DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
-os.makedirs(DISK_PATH, exist_ok=True)
-
 DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 
 load_dotenv()
