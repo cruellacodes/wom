@@ -17,6 +17,9 @@ load_dotenv()
 DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
 DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 
+if not os.path.exists(DISK_PATH) and not DISK_PATH.startswith("/data"):
+    os.makedirs(DISK_PATH, exist_ok=True)
+
 def init_db():
     """Initialize the database and create tables if they don't exist."""
     conn = sqlite3.connect(DB_PATH)

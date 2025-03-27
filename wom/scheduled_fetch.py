@@ -12,6 +12,9 @@ import os
 DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
 DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 
+if not os.path.exists(DISK_PATH) and not DISK_PATH.startswith("/data"):
+    os.makedirs(DISK_PATH, exist_ok=True)
+
 load_dotenv()
 
 init_db()
