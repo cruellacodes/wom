@@ -1,118 +1,151 @@
 # Crypto Sentiment Analyzer
 
+[![Python](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/cruellacodes/wom?style=social)](https://github.com/cruellacodes/wom)
+
+---
+
 ## Overview
 
-**Crypto Sentiment Analyzer** is a robust pipeline designed to assess the market sentiment of cryptocurrency tokens using real-time Twitter data. The system performs the following steps:
+**Crypto Sentiment Analyzer** is a modular and scalable pipeline designed to assess the market sentiment of newly listed cryptocurrency tokens using real-time Twitter data. It combines data ingestion, parallel tweet fetching, transformer-based sentiment analysis, and frontend delivery.
 
-1. **Token Fetching & Filtering:**  
-   - Tokens are fetched from Dex Screener.
-   - They are filtered based on criteria such as age, market cap, volume, maker count, and liquidity.
+---
 
-2. **Concurrent Tweet Fetching with Round-Robin Assignment:**  
-   - For each filtered token, the latest tweets are fetched concurrently.
-   - A pool of 10 Apify tasks is used to fetch tweets.
-   - Tokens are assigned to these tasks using a **round-robin algorithm** that cycles through the list of available tasks sequentially. This ensures that the load is evenly distributed among the tasks.
+## Token Fetching & Filtering
 
-3. **Sentiment Analysis using CryptoBERT:**  
-   - Each tweet is preprocessed and analyzed using **CryptoBERT**, a transformer model fine-tuned exclusively on crypto-related data.
-   - **Sentiment analysis** is the process of determining the emotional tone behind a piece of text—in this case, measuring how "bullish" tweets are regarding a specific token.
-   - CryptoBERT has been trained on over **3.2 million crypto-related tweets**, enabling it to capture the nuances, slang, and context unique to cryptocurrency discussions.
-   - The model computes a bullishness score for each tweet. These scores are aggregated using the median and then expressed as a percentage to represent the overall bullish sentiment for the token.
+Tokens are fetched from the **Dex Screener API**, which provides real-time listings of newly created liquidity pools across decentralized exchanges.
 
-4. **Result Dispatch:**  
-   - The aggregated sentiment for each token is sent to the frontend for display on dashboards or leaderboards.
+To ensure quality and avoid spam tokens, the following **filters** are applied:
 
-> **Note:** A detailed pipeline diagram is included below.
+| Filter Criteria      | Description                                                           |
+|----------------------|-----------------------------------------------------------------------|
+| Age                  | Only tokens created within the last few hours are considered          |
+| Market Cap           | Tokens with non-zero or meaningful market caps are prioritized        |
+| Volume               | Filters out tokens with extremely low or zero volume                  |
+| Liquidity            | Ensures that the token has some level of real liquidity               |
+| Maker Count          | Tokens with too few or suspicious maker counts are excluded           |
+| Uniqueness / Validity| Duplicates, honeypots, or malformed data entries are skipped          |
+
+After this stage, a **filtered list of cashtags** is used as input to the tweet scraping pipeline.
+
+---
+
+## Concurrent Tweet Fetching with Round-Robin Assignment
+
+- Tweets are fetched via **10 Apify workers** concurrently.
+- A **round-robin scheduler** assigns each token to a task in a rotating fashion.
+- This ensures efficient distribution and concurrency without overloading any single worker.
+
+### Round-Robin Assignment Example
+
+- 10 workers, 25 tokens
+- Token 1 → Worker 1  
+  Token 2 → Worker 2  
+  …  
+  Token 10 → Worker 10  
+  Token 11 → Worker 1 again, and so on.
+
+---
+
+## Tweet Filtering
+
+Before sentiment analysis, collected tweets are pre-filtered to improve quality and reduce noise:
+
+| Filter                            | Purpose                                              |
+|-----------------------------------|------------------------------------------------------|
+| Language: English only            | Keeps model output consistent and accurate          |
+| Minimum length: > 3 words         | Removes noise, low-effort spam, or just emojis      |
+| Hashtag and emoji limits          | Excludes overly promotional or shill tweets         |
+| Minimum user followers            | Filters out posts from bot or inactive accounts     |
+
+---
+
+## Sentiment Analysis using CryptoBERT
+
+### What is Sentiment Analysis?
+
+Sentiment analysis is the NLP task of classifying a text’s emotional tone. In this case, we evaluate how optimistic or pessimistic a tweet is about a specific token.
+
+### CryptoBERT Overview
+
+- A transformer-based model fine-tuned on **3.2 million crypto-related tweets**
+- Able to interpret slang, sarcasm, and crypto-native terminology
+- Outputs class logits → softmax probabilities → sentiment scores
+
+### Processing Pipeline
+
+1. **Preprocessing** – Cleaning text, removing unwanted characters
+2. **Tokenization** – Preparing the tweet for model input
+3. **Model Inference** – Generating sentiment scores
+4. **Bullishness Extraction** – Extracting the positive class probability
+5. **Aggregation** – Median of all tweet scores per token → final score (%)
+
+---
+
+## Result Dispatch
+
+Once all tokens are processed:
+
+- Sentiment data is stored in SQLite
+- An API layer exposes endpoints to the frontend
+- The frontend visualizes this data in real time
+
+---
 
 ## Pipeline Diagram
 
 ![Pipeline Diagram](architecture-diagram.png)
 
-*The diagram above illustrates the complete flow—from token fetching and round-robin tweet retrieval to sentiment analysis and frontend integration.*
+*The diagram above illustrates the full data flow, including token filtering, round-robin tweet retrieval, sentiment analysis, and frontend API delivery.*
 
-## Round-Robin Assignment Explained
+---
 
-- **What It Is:**  
-  The round-robin algorithm cycles through a fixed list of tasks sequentially.
-  
-- **How It Works in This Pipeline:**  
-  - Assume there are 10 task IDs and 25 tokens.
-  - The first token is assigned to task ID 1, the second token to task ID 2, …, the tenth token to task ID 10.
-  - The eleventh token is then assigned again to task ID 1, the twelfth to task ID 2, and so on.
-  
-- **Benefits:**  
-  - **Load Balancing:** Ensures that no single task is overloaded.
-  - **Concurrency:** Multiple tokens are processed in parallel, significantly speeding up the overall analysis.
+## API Endpoints
 
-## Sentiment Analysis with CryptoBERT
+| Method | Route                            | Description                                |
+|--------|----------------------------------|--------------------------------------------|
+| GET    | `/tokens`                        | Retrieve all token sentiment summaries     |
+| GET    | `/tweets/{token_symbol}`         | Run live sentiment for a single token      |
+| GET    | `/stored-tweets/?token=XYZ`      | Retrieve stored tweet sentiment snapshots  |
+| GET    | `/tweet-volume/?token=XYZ`       | Get tweet count in last 6 hours            |
+| GET    | `/search-token/{chain}/{address}`| Lookup token via Dex Screener API          |
+| GET    | `/trigger-fetch`                 | Manually trigger pipeline execution        |
 
-### What is Sentiment Analysis?
+---
 
-Sentiment analysis is a natural language processing (NLP) technique that determines the emotional tone behind a body of text. In our application, it measures how "bullish" (optimistic) the sentiment is towards a cryptocurrency token based on tweets.
+## Frontend Integration
 
-### How CryptoBERT Works
+This project integrates with a frontend dashboard available here:  
+[**Frontend Repo: wom-fe**](https://github.com/cruellacodes/wom-fe)
 
-- **Model Overview:**  
-  CryptoBERT is a transformer-based model fine-tuned on over **3.2 million crypto-related tweets**. Its specialized training helps it understand the unique language and context found in cryptocurrency discussions.
+The frontend includes:
 
-- **Processing Steps:**
-  1. **Preprocessing:**  
-     Tweets are cleaned to remove URLs, extra spaces, and unwanted characters.
-     
-  2. **Tokenization:**  
-     The cleaned text is tokenized using the model's `AutoTokenizer`.
-     
-  3. **Inference:**  
-     The tokenized input is passed through `AutoModelForSequenceClassification`, generating raw logits for various sentiment classes.
-     
-  4. **Probability Conversion:**  
-     The logits are converted into probabilities via the softmax function.
-     
-  5. **Bullishness Score Extraction:**  
-     The probability corresponding to bullish sentiment (typically at index 2) is extracted as the bullishness score.
-     
-  6. **Aggregation:**  
-     For each token, the individual bullishness scores from multiple tweets are aggregated using the median, and then multiplied by 100 to express the final sentiment as a percentage.
+- Radar chart for 6-hour tweet volume comparison
+- Podium-style ranking for top tokens by tweet count
+- Bar chart for top tokens by WOM Score
+- Tooltip explanations for all visualizations
+
+The data is fetched directly from the backend API.
+
+---
 
 ## Setup and Installation
 
 ### Prerequisites
 
-- **Python 3.7+**
-- Environment variables must be configured:
-  - `APIFY_API_TOKEN`: Your Apify API token.
-  - `TOKEN_ACTORS`: A comma-separated list of 10 Apify task IDs (or in the format `username~taskName`).
-  - `COOKIES`: (Optional) Required cookies for Apify, if applicable.
+- Python 3.7+
+- Environment variables:
+  - `APIFY_API_TOKEN`
+  - `TOKEN_ACTORS` (comma-separated list of 10 Apify tasks)
+  - `COOKIES` (optional)
 
 ### Installation Steps
 
-1. **Clone the Repository:**
-
-   ```bash
-   git clone https://github.com/yourusername/crypto-sentiment-analyzer.git
-   cd crypto-sentiment-analyzer
-
-2. **Create a Virtual Environment & Install Dependencies:**
-
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-
-3. **Run the Application:**
-
-   ```bash
-   python your_script.py
-
-
-## Frontend Integration
-
-Once sentiment analysis is complete, the aggregated sentiment data for each token is dispatched to the frontend via an API endpoint. This data can then be displayed on dashboards or leaderboards to provide real-time insights into market sentiment.
-
-## Contributing
-
-Contributions and suggestions are welcome! Please fork the repository, create a feature branch, and submit a pull request with your improvements or fixes.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+```bash
+git clone https://github.com/yourusername/crypto-sentiment-analyzer.git
+cd crypto-sentiment-analyzer
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+python your_script.py
