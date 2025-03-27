@@ -1,30 +1,29 @@
-# Crypto Sentiment Analyzer
+# Word Of Mouth AI (WOM)
 
 [![Python](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/cruellacodes/wom?style=social)](https://github.com/cruellacodes/wom)
 
 ---
 
 ## Overview
 
-**Crypto Sentiment Analyzer** is a modular and scalable pipeline designed to assess the market sentiment of newly listed cryptocurrency tokens using real-time Twitter data. It combines data ingestion, parallel tweet fetching, transformer-based sentiment analysis, and frontend delivery.
+**Word Of Mouth AI (WOM)** is a modular and scalable AI designed to assess the market sentiment of newly listed cryptocurrency tokens using real-time Twitter data. It combines data ingestion, parallel tweet fetching, transformer-based sentiment analysis, and frontend delivery.
 
 ---
 
 ## Token Fetching & Filtering
 
-Tokens are fetched from the **Dex Screener API**, which provides real-time listings of newly created liquidity pools across decentralized exchanges.
+Tokens are fetched from **Dex Screener**, which provides real-time listings of newly created liquidity pools across decentralized exchanges.
 
 To ensure quality and avoid spam tokens, the following **filters** are applied:
 
 | Filter Criteria      | Description                                                           |
 |----------------------|-----------------------------------------------------------------------|
-| Age                  | Only tokens created within the last few hours are considered          |
-| Market Cap           | Tokens with non-zero or meaningful market caps are prioritized        |
-| Volume               | Filters out tokens with extremely low or zero volume                  |
+| Age                  | Only tokens created within the last 48 hours are considered           |
+| Market Cap           | Super Low Market Caps excluded                                        |
+| Volume               | Filters out tokens with extremely low or suspicious volume            |
 | Liquidity            | Ensures that the token has some level of real liquidity               |
-| Maker Count          | Tokens with too few or suspicious maker counts are excluded           |
+| Maker Count          | Tokens with too few or suspicious makers are excluded                 |
 | Uniqueness / Validity| Duplicates, honeypots, or malformed data entries are skipped          |
 
 After this stage, a **filtered list of cashtags** is used as input to the tweet scraping pipeline.
@@ -34,7 +33,7 @@ After this stage, a **filtered list of cashtags** is used as input to the tweet 
 ## Concurrent Tweet Fetching with Round-Robin Assignment
 
 - Tweets are fetched via **10 Apify workers** concurrently.
-- A **round-robin scheduler** assigns each token to a task in a rotating fashion.
+- A **round-robin scheduler**(https://en.wikipedia.org/wiki/Round-robin_scheduling) assigns each token to a task in a rotating fashion.
 - This ensures efficient distribution and concurrency without overloading any single worker.
 
 ### Round-Robin Assignment Example
@@ -52,8 +51,8 @@ After this stage, a **filtered list of cashtags** is used as input to the tweet 
 
 Before sentiment analysis, collected tweets are pre-filtered to improve quality and reduce noise:
 
-| Filter                            | Purpose                                              |
-|-----------------------------------|------------------------------------------------------|
+| Filter                            | Purpose                                             |
+|-----------------------------------|-----------------------------------------------------|
 | Language: English only            | Keeps model output consistent and accurate          |
 | Minimum length: > 3 words         | Removes noise, low-effort spam, or just emojis      |
 | Hashtag and emoji limits          | Excludes overly promotional or shill tweets         |
@@ -79,7 +78,7 @@ Sentiment analysis is the NLP task of classifying a text’s emotional tone. In 
 2. **Tokenization** – Preparing the tweet for model input
 3. **Model Inference** – Generating sentiment scores
 4. **Bullishness Extraction** – Extracting the positive class probability
-5. **Aggregation** – Median of all tweet scores per token → final score (%)
+5. **Aggregation** – Average of all tweet scores per token → final score (%)
 
 ---
 
@@ -124,7 +123,11 @@ The frontend includes:
 - Radar chart for 6-hour tweet volume comparison
 - Podium-style ranking for top tokens by tweet count
 - Bar chart for top tokens by WOM Score
-- Tooltip explanations for all visualizations
+- CA Search Bar 
+- Twitter Scatter Chart that displays tweets by token in the last 24h
+- Info Token Card
+- Leaderboard
+- Bubble Chart that displays tweets from Leaderboard tokens in the last 24h
 
 The data is fetched directly from the backend API.
 
@@ -143,9 +146,8 @@ The data is fetched directly from the backend API.
 ### Installation Steps
 
 ```bash
-git clone https://github.com/yourusername/crypto-sentiment-analyzer.git
+git clone https://github.com/cruellacodes/wom.git
 cd crypto-sentiment-analyzer
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-python your_script.py
