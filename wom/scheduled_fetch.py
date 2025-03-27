@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,8 @@ from dotenv import load_dotenv
 from main import init_db
 
 load_dotenv()
+
+os.makedirs("/data", exist_ok=True)
 
 DB_PATH = "/data/tokens.db"
 
