@@ -33,7 +33,7 @@ After this stage, a **filtered list of cashtags** is used as input to the tweet 
 ## Concurrent Tweet Fetching with Round-Robin Assignment
 
 - Tweets are fetched via **10 Apify workers** concurrently.
-- A **round-robin scheduler**(https://en.wikipedia.org/wiki/Round-robin_scheduling) assigns each token to a task in a rotating fashion.
+- A [**round-robin scheduler**](https://en.wikipedia.org/wiki/Round-robin_scheduling) assigns each token to a task in a rotating fashion.
 - This ensures efficient distribution and concurrency without overloading any single worker.
 
 ### Round-Robin Assignment Example
