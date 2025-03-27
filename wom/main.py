@@ -14,7 +14,7 @@ import requests
 # logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
 
-DB_PATH = "tokens.db"
+DB_PATH = "/data/tokens.db"
 
 def init_db():
     """Initialize the database and create tables if they don't exist."""

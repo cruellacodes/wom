@@ -11,7 +11,7 @@ api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
-DB_PATH = "tokens.db"
+DB_PATH = "/data/tokens.db"
 
 async def extract_and_format_symbol(token_symbol_raw):
     """Format the token symbol as a cashtag."""

@@ -8,13 +8,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_PATH = "tokens.db"
+DB_PATH = "/data/tokens.db"
 
 def delete_old_tokens():
     """Delete tokens that are older than 24 hours."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=48)
     cursor.execute("DELETE FROM tokens WHERE created_at <= ?", (cutoff_time,))
     conn.commit()
     conn.close()
