@@ -10,11 +10,14 @@ from fastapi.responses import Response
 from twitter_analysis import fetch_and_analyze, fetch_stored_tweets
 from new_pairs_tracker import fetch_tokens, fetch_tokens_from_db
 import requests
+import os
 
-# logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
 
-DB_PATH = "/data/tokens.db"
+DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
+os.makedirs(DISK_PATH, exist_ok=True)
+
+DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 
 def init_db():
     """Initialize the database and create tables if they don't exist."""
