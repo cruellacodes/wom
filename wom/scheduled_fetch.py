@@ -5,20 +5,25 @@ from twitter_analysis import fetch_and_analyze
 from new_pairs_tracker import fetch_tokens
 import sqlite3
 from dotenv import load_dotenv
+from main import init_db
 
 load_dotenv()
 
 DB_PATH = "/data/tokens.db"
 
+init_db()
+
 def delete_old_tokens():
-    """Delete tokens that are older than 24 hours."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=48)
-    cursor.execute("DELETE FROM tokens WHERE created_at <= ?", (cutoff_time,))
-    conn.commit()
-    conn.close()
-    logging.info("Deleted old tokens created before %s.", cutoff_time)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=48)
+        cursor.execute("DELETE FROM tokens WHERE created_at <= ?", (cutoff_time,))
+        conn.commit()
+        conn.close()
+        logging.info("Deleted tokens older than 48 hours.")
+    except Exception as e:
+        logging.error(f"Error deleting old tokens: {e}")
 
 async def scheduled_job():
     logging.info("Cron job started: Fetching tokens and analyzing tweets...")
