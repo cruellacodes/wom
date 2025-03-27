@@ -7,12 +7,14 @@ from new_pairs_tracker import fetch_tokens
 import sqlite3
 from dotenv import load_dotenv
 from main import init_db
+import os
+
+DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
+os.makedirs(DISK_PATH, exist_ok=True)
+
+DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 
 load_dotenv()
-
-os.makedirs("/data", exist_ok=True)
-
-DB_PATH = "/data/tokens.db"
 
 init_db()
 
