@@ -11,6 +11,13 @@ from twitter_analysis import fetch_and_analyze, fetch_stored_tweets
 from new_pairs_tracker import fetch_tokens, fetch_tokens_from_db
 import requests
 import os
+import random
+
+BROWSER_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)...",
+    ...
+]
 
 load_dotenv()
 
@@ -192,7 +199,11 @@ DEX_SCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1"
 async def search_token(chain_id: str, token_address: str):
     try:
         url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}"
-        headers = {"User-Agent": "WordOfMouthApp/1.0"}
+
+        headers = {
+            "User-Agent": random.choice(BROWSER_USER_AGENTS)
+        }
+
         
         logging.info(f"[Dex API] Fetching: {url}")
         response = requests.get(url, headers=headers)
