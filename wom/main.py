@@ -20,9 +20,11 @@ DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 if not os.path.exists(DISK_PATH) and not DISK_PATH.startswith("/data"):
     os.makedirs(DISK_PATH, exist_ok=True)
 
-def init_db():
+def init_db(db_path: str = None):
     """Initialize the database and create tables if they don't exist."""
-    conn = sqlite3.connect(DB_PATH)
+    db_path = db_path or DB_PATH
+    conn = sqlite3.connect(db_path)
+
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tweets (
