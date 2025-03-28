@@ -162,19 +162,28 @@ async def get_tweet_volume_endpoint(token: str = Query(..., description="Token s
         logging.error(f"Error fetching tweet volume for {token}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-# Endpoint to manually trigger token fetching.
-@app.get("/trigger-fetch")
-async def trigger_fetch():
-    tokens = await fetch_tokens()
-    results = []
+from fastapi import Query
 
-    for token in tokens:
-        result = await fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH)
-        results.append(result)
+@app.get("/run-scheduled-job")
+async def run_scheduled_job(key: str = Query(...)):
+    expected_key = os.getenv("SCHEDULE_KEY")
+    if key != expected_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
-    logging.info("Manual fetching completed successfully.")
-    return results
+    try:
+        delete_old_tokens()  # Clean old records first
+        tokens = await fetch_tokens()
+        results = []
 
+        for token in tokens:
+            result = await fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH)
+            results.append(result)
+
+        logging.info(f"Scheduled job completed. {len(results)} tokens processed.")
+        return {"message": "Job completed", "processed_tokens": len(results)}
+    except Exception as e:
+        logging.error(f"Error in scheduled job: {e}")
+        raise HTTPException(status_code=500, detail="Scheduled job failed.")
 
 
 DEX_SCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1"

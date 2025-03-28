@@ -109,7 +109,7 @@ Once all tokens are processed:
 | GET    | `/stored-tweets/?token=XYZ`      | Retrieve stored tweet sentiment snapshots  |
 | GET    | `/tweet-volume/?token=XYZ`       | Get tweet count in last 6 hours            |
 | GET    | `/search-token/{chain}/{address}`| Lookup token via Dex Screener API          |
-| GET    | `/trigger-fetch`                 | Manually trigger pipeline execution        |
+| GET    | `/run-scheduled-job`             | Trigger pipeline execution                 |
 
 ---
 
