@@ -190,46 +190,45 @@ DEX_SCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1"
 
 @app.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
-    """
-    Fetch token details from Dex Screener API.
-    - Return token info.
-    """
     try:
         url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}"
-        response = requests.get(url)
-
+        headers = {"User-Agent": "WordOfMouthApp/1.0"}
+        
+        logging.info(f"[Dex API] Fetching: {url}")
+        response = requests.get(url, headers=headers)
+        logging.info(f"[Dex API] Status: {response.status_code}")
+        logging.info(f"[Dex API] Body: {response.text[:500]}")  # Trim if large
+        
         if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Failed to fetch token data")
+            raise HTTPException(status_code=500, detail=f"Dex API error: {response.status_code}")
 
         data = response.json()
-        if not data or not isinstance(data, list):
+
+        if not isinstance(data, list) or len(data) == 0:
             raise HTTPException(status_code=404, detail="Token not found")
 
-        # Extract token details
-        token_data = data[0]
+        token_data = data[0]  # The actual token object
         token_symbol = token_data["baseToken"]["symbol"]
 
-        # Calculate token age in hours
         pair_created_timestamp = token_data.get("pairCreatedAt", 0)
-        token_age_hours = round((datetime.now(timezone.utc).timestamp() - (pair_created_timestamp / 1000)) / 3600, 2) if pair_created_timestamp else "N/A"
+        token_age_hours = round(
+            (datetime.now(timezone.utc).timestamp() - (pair_created_timestamp / 1000)) / 3600, 2
+        ) if pair_created_timestamp else "N/A"
 
-        # Return token details
-        token_info = {
+        return {
             "symbol": token_symbol,
-            "priceUsd": token_data["priceUsd"],
+            "priceUsd": token_data.get("priceUsd", "N/A"),
             "marketCap": token_data.get("marketCap", "N/A"),
-            "liquidity": token_data["liquidity"]["usd"],
-            "volume24h": token_data["volume"].get("h24", 0),
-            "priceChange1h": token_data["priceChange"].get("h1", 0),
+            "liquidity": token_data.get("liquidity", {}).get("usd", 0),
+            "volume24h": token_data.get("volume", {}).get("h24", 0),
+            "priceChange1h": token_data.get("priceChange", {}).get("h1", 0),
             "ageHours": token_age_hours,
-            "dexUrl": token_data["url"],
+            "dexUrl": token_data.get("url", "#"),
         }
-
-        return token_info 
 
     except Exception as e:
         logging.error(f"Error in search_token: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/tweets/{token_symbol}")
 async def get_tweets(token_symbol: str):
