@@ -9,12 +9,16 @@ from dotenv import load_dotenv
 from main import init_db
 import os
 
-DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
+DISK_PATH = os.getenv("DISK_PATH", "/data")
 DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 
-load_dotenv()
+if not os.path.exists(DISK_PATH):
+    os.makedirs(DISK_PATH, exist_ok=True)
 
-init_db()
+logging.info(f"Using DB_PATH: {DB_PATH}")
+init_db(DB_PATH)
+
+load_dotenv()
 
 def delete_old_tokens():
     try:

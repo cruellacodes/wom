@@ -14,6 +14,9 @@ if not api_token:
 DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
 DB_PATH = os.path.join(DISK_PATH, "tokens.db")
 
+if not os.path.exists(DISK_PATH) and not DISK_PATH.startswith("/data"):
+    os.makedirs(DISK_PATH, exist_ok=True)
+
 async def extract_and_format_symbol(token_symbol_raw):
     """Format the token symbol as a cashtag."""
     try:
