@@ -193,12 +193,10 @@ async def run_scheduled_job(key: str = Query(...)):
         raise HTTPException(status_code=500, detail="Scheduled job failed.")
 
 
-DEX_SCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1"
-
 @app.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
     try:
-        url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}"
+        url = f"https://search-wom.cruellacodes.workers.dev/{chain_id}/{token_address}"
 
         headers = {
             "User-Agent": random.choice(BROWSER_USER_AGENTS),
