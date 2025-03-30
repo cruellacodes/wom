@@ -1,30 +1,31 @@
 import re
+from typing import Callable, List
 
-def is_relevant_tweet(tweet_text):
-    """
-    Check if the tweet contains meaningful content and applies filters:
-    - Exclude tweets with more than 3 combined hashtags and cashtags.
-    - Exclude tweets containing the rocket emoji (🚀).
-    - Exclude tweets with fewer than 3 words.
-    """
-    # Check for hashtags and cashtags
-    hashtag_count = len(re.findall(r"#\w+", tweet_text))
-    cashtag_count = len(re.findall(r"\$\w+", tweet_text))
-    
-    # Exclude tweets with more than 3 combined hashtags/cashtags
-    if hashtag_count + cashtag_count > 3:
-        return False
+# --- Rule functions ---
+def has_too_many_tags(text: str) -> bool:
+    return (len(re.findall(r"#\w+", text)) + len(re.findall(r"\$\w+", text))) > 3
 
-    # Exclude tweets with the rocket emoji
-    if "🚀" in tweet_text:
-        return False
+def contains_rocket(text: str) -> bool:
+    return "🚀" in text
 
-    # Split tweet into words
-    words = tweet_text.split()
+def has_short_word_count(text: str) -> bool:
+    return len(text.split()) < 3
 
-    # Ignore tweets with fewer than 3 words
-    if len(words) < 3:
-        return False
+def contains_tco_link(text: str) -> bool:
+    return "t.co" in text.lower()
 
-    return True
+def contains_telegram_link(text: str) -> bool:
+    return re.search(r"(t\.me/|telegram\.me/)", text.lower()) is not None
 
+
+# --- Filter engine ---
+FILTER_RULES: List[Callable[[str], bool]] = [
+    has_too_many_tags,
+    contains_rocket,
+    has_short_word_count,
+    contains_tco_link,
+    contains_telegram_link,
+]
+
+def is_relevant_tweet(tweet_text: str) -> bool:
+    return not any(rule(tweet_text) for rule in FILTER_RULES)
