@@ -201,17 +201,21 @@ async def search_token(chain_id: str, token_address: str):
         url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}"
 
         headers = {
-            "User-Agent": random.choice(BROWSER_USER_AGENTS)
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",  # avoids gzip, br
         }
 
-        
-        logging.info(f"[Dex API] Fetching: {url}")
         response = requests.get(url, headers=headers)
-        logging.info(f"[Dex API] Status: {response.status_code}")
-        logging.info(f"[Dex API] Body: {response.text[:500]}")  # Trim if large
-        
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail=f"Dex API error: {response.status_code}")
+
+        try:
+            data = response.json()
+            logging.info("[Dex API] JSON parsed successfully")
+        except Exception as e:
+            logging.error(f"[Dex API] Failed to parse JSON: {e}")
+            logging.debug(f"[Dex API] Raw content: {response.content[:500]}")
+            raise
+
 
         data = response.json()
 
