@@ -201,7 +201,7 @@ async def search_token(chain_id: str, token_address: str):
         url = f"{DEX_SCREENER_TOKEN_API}/{chain_id}/{token_address}"
 
         headers = {
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": random.choice(BROWSER_USER_AGENTS),
             "Accept": "application/json",
             "Accept-Encoding": "identity",  # avoids gzip, br
         }
