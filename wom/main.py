@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, HTTPException, Query, Header
+from fastapi import FastAPI, HTTPException, Query, Header, BackgroundTasks
 from dotenv import load_dotenv
 import logging
 from fastapi.middleware.cors import CORSMiddleware
@@ -175,20 +175,22 @@ async def run_scheduled_job(key: str = Header(...)):
     if key != expected_key:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    # Trigger the background job and return immediately
+    BackgroundTasks.add_task(process_tokens)
+    return {"message": "Job triggered"}
+
+async def process_tokens():
     try:
         delete_old_tokens()  # Clean old records first
         tokens = await fetch_tokens()
         results = []
-
         for token in tokens:
             result = await fetch_and_analyze(token["token_symbol"], store=True, db_path=DB_PATH)
             results.append(result)
-
         logging.info(f"Scheduled job completed. {len(results)} tokens processed.")
-        return {"message": "Job completed", "processed_tokens": len(results)}
     except Exception as e:
         logging.error(f"Error in scheduled job: {e}")
-        raise HTTPException(status_code=500, detail="Scheduled job failed.")
+
 
 @app.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
