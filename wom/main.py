@@ -170,13 +170,14 @@ async def get_tweet_volume_endpoint(token: str = Query(..., description="Token s
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/run-scheduled-job")
-async def run_scheduled_job(key: str = Header(...)):
+async def run_scheduled_job(key: str = Header(...), background_tasks: BackgroundTasks = None):
     expected_key = os.getenv("SCHEDULE_KEY")
     if key != expected_key:
         raise HTTPException(status_code=403, detail="Forbidden")
-
-    # Trigger the background job and return immediately
-    BackgroundTasks.add_task(process_tokens)
+    
+    # Schedule the heavy task to run in the background
+    background_tasks.add_task(process_tokens)
+    
     return {"message": "Job triggered"}
 
 async def process_tokens():
