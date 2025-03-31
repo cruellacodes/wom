@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header
 from dotenv import load_dotenv
 import logging
 from fastapi.middleware.cors import CORSMiddleware
@@ -169,10 +169,8 @@ async def get_tweet_volume_endpoint(token: str = Query(..., description="Token s
         logging.error(f"Error fetching tweet volume for {token}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-from fastapi import Query
-
 @app.get("/run-scheduled-job")
-async def run_scheduled_job(key: str = Query(...)):
+async def run_scheduled_job(key: str = Header(...)):
     expected_key = os.getenv("SCHEDULE_KEY")
     if key != expected_key:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -191,7 +189,6 @@ async def run_scheduled_job(key: str = Query(...)):
     except Exception as e:
         logging.error(f"Error in scheduled job: {e}")
         raise HTTPException(status_code=500, detail="Scheduled job failed.")
-
 
 @app.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
