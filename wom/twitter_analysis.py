@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from utils import is_relevant_tweet
 from datetime import datetime, timedelta, timezone
 from transformers import TextClassificationPipeline
+from db import database
+from models import tweets
 
 # Configure logging
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -36,38 +38,51 @@ model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 # Initialize pipeline
 pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, top_k=None)
 
-async def store_tweets(token, processed_tweets, db_path):
-    """Stores processed tweets in the database."""
+async def store_tweets(token: str, processed_tweets: list):
+    """Stores processed tweets in the PostgreSQL database."""
     if not processed_tweets:
         logging.info(f"No new tweets to store for {token}.")
         return
 
     logging.info(f"Attempting to store {len(processed_tweets)} tweets for {token}.")
 
-    async with aiosqlite.connect(db_path) as conn:
-        cursor = await conn.cursor()
+    try:
+        query = """
+        INSERT INTO tweets (
+            id, token, text, user_name, followers_count, profile_pic, created_at, wom_score
+        )
+        VALUES (
+            :id, :token, :text, :user_name, :followers_count, :profile_pic, :created_at, :wom_score
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            token = excluded.token,
+            text = excluded.text,
+            user_name = excluded.user_name,
+            followers_count = excluded.followers_count,
+            profile_pic = excluded.profile_pic,
+            created_at = excluded.created_at,
+            wom_score = excluded.wom_score;
+        """
 
-        try:
-            await cursor.executemany("""
-                INSERT INTO tweets (id, token, text, user_name, followers_count, profile_pic, created_at, wom_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE 
-                SET token = excluded.token, 
-                    text = excluded.text, 
-                    user_name = excluded.user_name, 
-                    followers_count = excluded.followers_count, 
-                    profile_pic = excluded.profile_pic, 
-                    created_at = excluded.created_at, 
-                    wom_score = excluded.wom_score
-            """, [
-                (tweet["id"], token, tweet["text"], tweet["user_name"], tweet["followers_count"],
-                 tweet["profile_pic"], tweet["created_at"], tweet["wom_score"])
-                for tweet in processed_tweets
-            ])
-            await conn.commit()
-            logging.info(f"Stored {len(processed_tweets)} tweets for {token}.")
-        except Exception as e:
-            logging.error(f"Error inserting tweets into DB: {e}")
+        values = [
+            {
+                "id": tweet["id"],
+                "token": token,
+                "text": tweet["text"],
+                "user_name": tweet["user_name"],
+                "followers_count": tweet["followers_count"],
+                "profile_pic": tweet["profile_pic"],
+                "created_at": tweet["created_at"],  # Must be ISO 8601 string or datetime object
+                "wom_score": tweet["wom_score"],
+            }
+            for tweet in processed_tweets
+        ]
+
+        await database.execute_many(query=query, values=values)
+        logging.info(f"Stored {len(processed_tweets)} tweets for {token}.")
+
+    except Exception as e:
+        logging.error(f"Error inserting tweets into PostgreSQL: {e}")
 
 
 async def update_task_input(task_id, new_input):
@@ -93,26 +108,23 @@ async def update_task_input(task_id, new_input):
         return response.json()
     
     
-async def fetch_stored_tweets(token, db_path):
-    """Fetch stored tweets for a specific token from the database."""
-    async with aiosqlite.connect(db_path) as conn:
-        cursor = await conn.cursor()
-        await cursor.execute("SELECT id, text, user_name, followers_count, profile_pic, created_at, wom_score FROM tweets WHERE token = ? ORDER BY id DESC", (token,))
-        rows = await cursor.fetchall()
+async def fetch_stored_tweets(token: str):
+    """Fetch stored tweets for a specific token from PostgreSQL."""
+    query = tweets.select().where(tweets.c.token == token).order_by(tweets.c.id.desc())
+    rows = await database.fetch_all(query)
 
     return [
         {
-            "id": row[0],
-            "text": row[1],
-            "user_name": row[2],
-            "followers_count": row[3],
-            "profile_pic": row[4],
-            "created_at": row[5],
-            "wom_score": float(row[6]) 
+            "id": row["id"],
+            "text": row["text"],
+            "user_name": row["user_name"],
+            "followers_count": row["followers_count"],
+            "profile_pic": row["profile_pic"],
+            "created_at": row["created_at"],
+            "wom_score": float(row["wom_score"]) if row["wom_score"] is not None else 1.0
         }
         for row in rows
     ]
-
 
 async def fetch_tweets(token, task_id):
     """
@@ -242,46 +254,42 @@ async def get_sentiment(tweets_by_token):
     logging.debug(f"DEBUG: get_sentiment() returning: {sentiment_results}")
     return sentiment_results
 
+async def fetch_tweet_volume_last_6h(token: str):
+    """Return tweet count per hour for the last 6 hours for a given token (PostgreSQL version)."""
+    current_time = datetime.now(timezone.utc)
+    six_hours_ago = current_time - timedelta(hours=6)
 
+    # Query the DB for tweets within the last 6 hours for the token
+    query = (
+        tweets.select()
+        .with_only_columns([tweets.c.created_at])
+        .where(
+            (tweets.c.token == token) &
+            (tweets.c.created_at >= six_hours_ago)
+        )
+    )
 
-async def fetch_tweet_volume_last_6h(token, db_path):
-    """Fetch stored tweets for a specific token and return tweet count per hour for the last 6 hours."""
-    current_time = datetime.now(timezone.utc)  # Use timezone-aware UTC datetime
+    rows = await database.fetch_all(query)
 
-    # Create a dictionary to store tweet counts for each hour
+    # Prepare volume dictionary: Hour -6 to Hour -1
     tweet_volume = {f"Hour -{i}": 0 for i in range(6, 0, -1)}
 
-    async with aiosqlite.connect(db_path) as conn:
-        cursor = await conn.cursor()
-
-        # Fetch all tweets from the last 6 hours
-        six_hours_ago = (current_time - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
-        await cursor.execute(
-            "SELECT created_at FROM tweets WHERE token = ? AND created_at >= ? ORDER BY created_at DESC",
-            (token, six_hours_ago)
-        )
-        rows = await cursor.fetchall()
-
-    # Count tweets per hour
+    # Count per hour
     for row in rows:
-        created_at_str = row[0]
-        tweet_time = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        hours_ago = (current_time - tweet_time).seconds // 3600  # Calculate how many hours ago
-
+        created_at = row["created_at"]  # already a timezone-aware datetime
+        hours_ago = int((current_time - created_at).total_seconds() // 3600)
         if 1 <= hours_ago <= 6:
-            tweet_volume[f"Hour -{hours_ago}"] += 1  # Increment count for the respective hour
+            tweet_volume[f"Hour -{hours_ago}"] += 1
 
-    return tweet_volume  # Returns { "Hour -6": X, "Hour -5": Y, ..., "Hour -1": Z }
+    return tweet_volume
 
-
-async def fetch_and_analyze(token_symbol, store=True, db_path=None):
+async def fetch_and_analyze(token_symbol, store=True):
     """
     Fetch tweets, process them, analyze sentiment, and store (if needed) for a single token.
 
     Args:
         token_symbol (str): The token symbol to analyze.
         store (bool): Whether to store tweets in the DB (default: True).
-        db_path (str): Path to the database.
 
     Returns:
         dict: Analysis results including tweets and sentiment data.
@@ -296,12 +304,10 @@ async def fetch_and_analyze(token_symbol, store=True, db_path=None):
     if not raw_tweets:
         logging.info(f"No tweets found for {token_symbol}.")
         return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
-    
 
     # Step 2: Process tweets (filter and clean)
     processed_tweets_dict = await preprocess_tweets(raw_tweets, token_symbol)
     processed_tweets = processed_tweets_dict.get(token_symbol, [])
-
 
     if not processed_tweets:
         logging.info(f"All tweets filtered out for {token_symbol}.")
@@ -326,11 +332,11 @@ async def fetch_and_analyze(token_symbol, store=True, db_path=None):
     processed_tweets = sentiment_data.get("tweets", [])
     
     # Step 4: Store results if `store=True`
-    if store and db_path:
-        await store_tweets(token_symbol, processed_tweets, db_path)
+    if store:
+        await store_tweets(token_symbol, processed_tweets)
 
         # Step 5: Update tokens table with WOM score and tweet count
-        await update_token_data(token_symbol, wom_score, tweet_count, db_path)
+        await update_token_data(token_symbol, wom_score, tweet_count)
 
     # Step 6: Return analysis results
     result = {
@@ -373,7 +379,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
         # Convert timestamp
         try:
             dt = datetime.strptime(tweet_data["created_at"], "%a %b %d %H:%M:%S %z %Y")
-            tweet_data["created_at"] = dt.astimezone(pytz.utc).strftime("%Y-%m-%d %H:%M:%S")
+            tweet_data["created_at"] = dt.astimezone(pytz.utc).isoformat()
         except Exception:
             tweet_data["created_at"] = None
 
@@ -384,21 +390,24 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
     return {token_symbol: processed_tweets}
 
 
-async def update_token_data(token_symbol, wom_score, tweet_count, db_path):
-    """Updates the token table with WOM Score and tweet count."""
-    if not db_path:
-        logging.warning("Database path not provided. Skipping token update.")
-        return
-
+async def update_token_data(token_symbol: str, wom_score: float, tweet_count: int):
+    """Updates the token table with WOM Score and tweet count in PostgreSQL."""
     query = """
     INSERT INTO tokens (token_symbol, wom_score, tweet_count)
-    VALUES (?, ?, ?)
-    ON CONFLICT(token_symbol) DO UPDATE 
-    SET wom_score = excluded.wom_score, tweet_count = excluded.tweet_count
+    VALUES (:token_symbol, :wom_score, :tweet_count)
+    ON CONFLICT (token_symbol) DO UPDATE SET
+        wom_score = excluded.wom_score,
+        tweet_count = excluded.tweet_count
     """
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute(query, (token_symbol, wom_score, tweet_count))
-        await db.commit()
+    values = {
+        "token_symbol": token_symbol,
+        "wom_score": wom_score,
+        "tweet_count": tweet_count
+    }
 
-    logging.info(f"Updated tokens table: {token_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
+    try:
+        await database.execute(query=query, values=values)
+        logging.info(f"Updated tokens table: {token_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
+    except Exception as e:
+        logging.error(f"Error updating token data for {token_symbol}: {e}")
