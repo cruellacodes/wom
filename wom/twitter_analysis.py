@@ -71,7 +71,7 @@ async def store_tweets(token: str, processed_tweets: list):
                 "user_name": tweet["user_name"],
                 "followers_count": tweet["followers_count"],
                 "profile_pic": tweet["profile_pic"],
-                "created_at": tweet["created_at"],  # Must be ISO 8601 string or datetime object
+                "created_at": datetime.fromisoformat(tweet["created_at"]), 
                 "wom_score": tweet["wom_score"],
             }
             for tweet in processed_tweets

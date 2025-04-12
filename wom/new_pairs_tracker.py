@@ -155,7 +155,7 @@ async def fetch_tokens():
     """
     filtered_tokens = await get_filtered_pairs()
     if filtered_tokens:
-        store_tokens(filtered_tokens)
+        await store_tokens(filtered_tokens)
     else:
         logging.info("No tokens with recent Raydium pools to store.")
     return filtered_tokens
