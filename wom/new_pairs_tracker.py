@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import os
 import logging
 import httpx
@@ -144,6 +145,7 @@ async def store_tokens(tokens_data):
             "market_cap_usd": token.get("market_cap_usd"),
             "dex_url": f"https://dexscreener.com/solana/{token.get('address')}",
             "pricechange1h": token.get("priceChange1h"), 
+            "created_at": datetime.now(timezone.utc),
         })
 
     await database.execute_many(query=query, values=values)
