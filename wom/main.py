@@ -12,7 +12,7 @@ from new_pairs_tracker import fetch_tokens
 import requests
 import os
 import random
-from db import DATABASE_URL, database
+from db import DATABASE_URL, database, sa_metadata
 from models import tokens
 
 BROWSER_USER_AGENTS = [
@@ -25,7 +25,7 @@ load_dotenv()
 
 def create_tables():
     engine = create_engine(DATABASE_URL)
-    metadata.create_all(engine)
+    sa_metadata.create_all(engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
