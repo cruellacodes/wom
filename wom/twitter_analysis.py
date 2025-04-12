@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from transformers import TextClassificationPipeline
 from db import database
 from models import tweets
+from sqlalchemy.dialects.postgresql import insert
 
 # Configure logging
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -36,7 +37,7 @@ model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
 # Initialize pipeline
 pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, top_k=None)
-
+    
 async def store_tweets(token: str, processed_tweets: list):
     """Stores processed tweets in the PostgreSQL database."""
     if not processed_tweets:
@@ -46,23 +47,6 @@ async def store_tweets(token: str, processed_tweets: list):
     logging.info(f"Attempting to store {len(processed_tweets)} tweets for {token}.")
 
     try:
-        query = """
-        INSERT INTO tweets (
-            id, token, text, user_name, followers_count, profile_pic, created_at, wom_score
-        )
-        VALUES (
-            :id, :token, :text, :user_name, :followers_count, :profile_pic, :created_at, :wom_score
-        )
-        ON CONFLICT (id) DO UPDATE SET
-            token = excluded.token,
-            text = excluded.text,
-            user_name = excluded.user_name,
-            followers_count = excluded.followers_count,
-            profile_pic = excluded.profile_pic,
-            created_at = excluded.created_at,
-            wom_score = excluded.wom_score;
-        """
-
         values = [
             {
                 "id": tweet["id"],
@@ -71,13 +55,26 @@ async def store_tweets(token: str, processed_tweets: list):
                 "user_name": tweet["user_name"],
                 "followers_count": tweet["followers_count"],
                 "profile_pic": tweet["profile_pic"],
-                "created_at": datetime.fromisoformat(tweet["created_at"]), 
+                "created_at": datetime.fromisoformat(tweet["created_at"]),
                 "wom_score": tweet["wom_score"],
             }
             for tweet in processed_tweets
         ]
 
-        await database.execute_many(query=query, values=values)
+        stmt = insert(tweets).on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "token": tweets.c.token,
+                "text": tweets.c.text,
+                "user_name": tweets.c.user_name,
+                "followers_count": tweets.c.followers_count,
+                "profile_pic": tweets.c.profile_pic,
+                "created_at": tweets.c.created_at,
+                "wom_score": tweets.c.wom_score,
+            }
+        )
+
+        await database.execute_many(query=stmt, values=values)
         logging.info(f"Stored {len(processed_tweets)} tweets for {token}.")
 
     except Exception as e:
