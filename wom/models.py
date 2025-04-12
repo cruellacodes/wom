@@ -1,6 +1,8 @@
 from sqlalchemy import Table, Column, Integer, String, Float, DateTime, Text
-from datetime import datetime
 from db import metadata
+from datetime import datetime, timezone
+
+default=lambda: datetime.now(timezone.utc)
 
 tweets = Table(
     "tweets",
@@ -11,7 +13,7 @@ tweets = Table(
     Column("followers_count", Integer, default=0),
     Column("user_name", String),
     Column("profile_pic", String),
-    Column("created_at", String),
+    Column("created_at", DateTime(timezone=True)),
     Column("wom_score", Float),
 )
 
@@ -30,5 +32,5 @@ tokens = Table(
     Column("pricechange1h", Float),
     Column("wom_score", Float),
     Column("tweet_count", Integer),
-    Column("created_at", DateTime, default=datetime.utcnow),
+    Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
 )

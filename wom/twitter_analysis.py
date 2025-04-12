@@ -254,14 +254,13 @@ async def get_sentiment(tweets_by_token):
     return sentiment_results
 
 async def fetch_tweet_volume_last_6h(token: str):
-    """Return tweet count per hour for the last 6 hours for a given token (PostgreSQL version)."""
+    """Return tweet count per hour for the last 6 hours for a given token"""
     current_time = datetime.now(timezone.utc)
     six_hours_ago = current_time - timedelta(hours=6)
 
-    # Query the DB for tweets within the last 6 hours for the token
     query = (
         tweets.select()
-        .with_only_columns([tweets.c.created_at])
+        .with_only_columns(tweets.c.created_at) 
         .where(
             (tweets.c.token == token) &
             (tweets.c.created_at >= six_hours_ago)
@@ -273,9 +272,12 @@ async def fetch_tweet_volume_last_6h(token: str):
     # Prepare volume dictionary: Hour -6 to Hour -1
     tweet_volume = {f"Hour -{i}": 0 for i in range(6, 0, -1)}
 
-    # Count per hour
     for row in rows:
-        created_at = row["created_at"]  # already a timezone-aware datetime
+        created_at = row["created_at"]
+        
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at).replace(tzinfo=timezone.utc)
+
         hours_ago = int((current_time - created_at).total_seconds() // 3600)
         if 1 <= hours_ago <= 6:
             tweet_volume[f"Hour -{hours_ago}"] += 1
