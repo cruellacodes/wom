@@ -5,6 +5,7 @@ import httpx
 from dotenv import load_dotenv
 from models import tokens
 from db import database
+from sqlalchemy.dialects.postgresql import insert
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
@@ -115,7 +116,7 @@ async def store_tokens(tokens_data):
     """
     Store tokens into the PostgreSQL 'tokens' table using async insert/update.
     """
-    query = tokens.insert().on_conflict_do_update(
+    query = insert(tokens).on_conflict_do_update(
         index_elements=["token_symbol"],
         set_={
             "token_name": tokens.c.token_name,
