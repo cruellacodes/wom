@@ -10,7 +10,7 @@ from utils import is_relevant_tweet
 from datetime import datetime, timedelta, timezone
 from transformers import TextClassificationPipeline
 from db import database
-from models import tweets
+from models import tokens, tweets
 from sqlalchemy.dialects.postgresql import insert
 
 # Configure logging
@@ -389,23 +389,21 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
 
 async def update_token_data(token_symbol: str, wom_score: float, tweet_count: int):
-    """Updates the token table with WOM Score and tweet count in PostgreSQL."""
-    query = """
-    INSERT INTO tokens (token_symbol, wom_score, tweet_count)
-    VALUES (:token_symbol, :wom_score, :tweet_count)
-    ON CONFLICT (token_symbol) DO UPDATE SET
-        wom_score = excluded.wom_score,
-        tweet_count = excluded.tweet_count
-    """
-
-    values = {
-        "token_symbol": token_symbol,
-        "wom_score": wom_score,
-        "tweet_count": tweet_count
-    }
+    """Updates the token table with WOM Score and tweet count using PostgreSQL upsert."""
+    stmt = insert(tokens).values(
+        token_symbol=token_symbol,
+        wom_score=wom_score,
+        tweet_count=tweet_count
+    ).on_conflict_do_update(
+        index_elements=["token_symbol"],
+        set_={
+            "wom_score": wom_score,
+            "tweet_count": tweet_count
+        }
+    )
 
     try:
-        await database.execute(query=query, values=values)
+        await database.execute(stmt)
         logging.info(f"Updated tokens table: {token_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
     except Exception as e:
         logging.error(f"Error updating token data for {token_symbol}: {e}")
