@@ -10,3 +10,4 @@ transformers==4.48.1
 torch
 sqlalchemy
 databases
+asyncpg
