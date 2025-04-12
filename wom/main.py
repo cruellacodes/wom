@@ -1,16 +1,18 @@
 from datetime import datetime, timedelta, timezone
+from importlib import metadata
 from fastapi import FastAPI, HTTPException, Query, Header, BackgroundTasks
 from dotenv import load_dotenv
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from fastapi.responses import Response
+from sqlalchemy import create_engine
 from twitter_analysis import fetch_and_analyze, fetch_stored_tweets, fetch_tweet_volume_last_6h
-from new_pairs_tracker import fetch_tokens, fetch_tokens_from_db
+from new_pairs_tracker import fetch_tokens
 import requests
 import os
 import random
-from db import database
+from db import DATABASE_URL, database
 from models import tokens
 
 BROWSER_USER_AGENTS = [
@@ -21,9 +23,16 @@ BROWSER_USER_AGENTS = [
 
 load_dotenv()
 
+def create_tables():
+    engine = create_engine(DATABASE_URL)
+    metadata.create_all(engine)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.info("Starting FastAPI App...")
+
+    create_tables()
+
     await database.connect()
     logging.info("Connected to PostgreSQL database.")
     try:
@@ -63,7 +72,7 @@ async def fetch_tokens_from_db():
             "Liquidity": row["liquidity_usd"],
             "MarketCap": row["market_cap_usd"],
             "dex_url": row["dex_url"],
-            "priceChange1h": row["priceChange1h"],
+            "priceChange1h": row["pricechange1h"],
             "WomScore": row["wom_score"],
             "TweetCount": row["tweet_count"]
         }

@@ -1,13 +1,12 @@
 uvicorn[standard]
-aiosqlite==0.21.0
 fastapi==0.115.12
+sqlalchemy>=2.0
+databases
+asyncpg
 httpx==0.28.1
+requests==2.32.3
 python-dotenv==1.1.0
 pytz==2024.1
-Requests==2.32.3
 scipy==1.15.2
 transformers==4.48.1
 torch
-sqlalchemy
-databases
-asyncpg

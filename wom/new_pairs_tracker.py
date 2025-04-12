@@ -1,9 +1,10 @@
 import asyncio
 import os
-import sqlite3
 import logging
 import httpx
 from dotenv import load_dotenv
+from models import tokens
+from db import database
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
@@ -110,85 +111,42 @@ async def get_filtered_pairs():
     logging.info(f"Filtering complete. Total unique tokens: {len(filtered_tokens)}.")
     return filtered_tokens
 
-
-def store_tokens(tokens):
+async def store_tokens(tokens_data):
     """
-    Store tokens in the 'tokens' table.
+    Store tokens into the PostgreSQL 'tokens' table using async insert/update.
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    for token in tokens:
-        dex_url = f"https://dexscreener.com/solana/{token.get('address')}"
-        cursor.execute("""
-            INSERT OR REPLACE INTO tokens (
-                token_symbol,
-                token_name,
-                address,
-                age_hours,
-                volume_usd,
-                maker_count,
-                liquidity_usd,
-                market_cap_usd,
-                dex_url,
-                priceChange1h
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            token.get("token_symbol"),
-            token.get("token_name"),
-            token.get("address"),
-            token.get("age_hours"),
-            token.get("volume_usd"),
-            token.get("maker_count"),
-            token.get("liquidity_usd"),
-            token.get("market_cap_usd"),
-            dex_url,
-            token.get("priceChange1h"),
-        ))
-    conn.commit()
-    conn.close()
-    logging.info("Tokens stored in the database succesfully.")
+    query = tokens.insert().on_conflict_do_update(
+        index_elements=["token_symbol"],
+        set_={
+            "token_name": tokens.c.token_name,
+            "address": tokens.c.address,
+            "age_hours": tokens.c.age_hours,
+            "volume_usd": tokens.c.volume_usd,
+            "maker_count": tokens.c.maker_count,
+            "liquidity_usd": tokens.c.liquidity_usd,
+            "market_cap_usd": tokens.c.market_cap_usd,
+            "dex_url": tokens.c.dex_url,
+            "pricechange1h": tokens.c.pricechange1h,
+        }
+    )
 
-def fetch_tokens_from_db(filtered_tokens):
-    """
-    Fetch only the filtered tokens from the 'tokens' table.
-    """
-    if not filtered_tokens:
-        return []  # Return empty list if no tokens to filter
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    token_addresses = tuple(token["address"] for token in filtered_tokens)
-
-    # Use parameterized query to prevent SQL injection
-    query = f"""
-        SELECT token_symbol, token_name, address, age_hours, volume_usd, maker_count,
-               liquidity_usd, market_cap_usd, dex_url, priceChange1h
-        FROM tokens
-        WHERE address IN ({",".join(["?"] * len(token_addresses))})
-    """
-
-    cursor.execute(query, token_addresses)
-    rows = cursor.fetchall()
-    conn.close()
-
-    # Convert fetched rows into a list of dictionaries
-    tokens = []
-    for row in rows:
-        tokens.append({
-            "token_symbol": row[0],
-            "token_name": row[1],
-            "address": row[2],
-            "age_hours": row[3],
-            "volume_usd": row[4],
-            "maker_count": row[5],
-            "liquidity_usd": row[6],
-            "market_cap_usd": row[7],
-            "dex_url": row[8],
-            "priceChange1h": row[9]
+    values = []
+    for token in tokens_data:
+        values.append({
+            "token_symbol": token.get("token_symbol"),
+            "token_name": token.get("token_name"),
+            "address": token.get("address"),
+            "age_hours": token.get("age_hours"),
+            "volume_usd": token.get("volume_usd"),
+            "maker_count": token.get("maker_count"),
+            "liquidity_usd": token.get("liquidity_usd"),
+            "market_cap_usd": token.get("market_cap_usd"),
+            "dex_url": f"https://dexscreener.com/solana/{token.get('address')}",
+            "pricechange1h": token.get("priceChange1h"), 
         })
-    
-    return tokens
+
+    await database.execute_many(query=query, values=values)
+    logging.info("Tokens stored/updated in PostgreSQL successfully.")
 
 
 async def fetch_tokens():

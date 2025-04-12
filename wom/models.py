@@ -27,7 +27,7 @@ tokens = Table(
     Column("liquidity_usd", Float),
     Column("market_cap_usd", Float),
     Column("dex_url", String),
-    Column("priceChange1h", Float),
+    Column("pricechange1h", Float),
     Column("wom_score", Float),
     Column("tweet_count", Integer),
     Column("created_at", DateTime, default=datetime.utcnow),

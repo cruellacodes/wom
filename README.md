@@ -86,7 +86,7 @@ Sentiment analysis is the NLP task of classifying a text’s emotional tone. In 
 
 Once all tokens are processed:
 
-- Sentiment data is stored in SQLite
+- Sentiment data is stored in PostgreSQL 
 - An API layer exposes endpoints to the frontend
 - The frontend visualizes this data in real time
 
