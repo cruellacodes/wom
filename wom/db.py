@@ -11,4 +11,4 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 database = Database(DATABASE_URL)
 
 # SQLAlchemy metadata
-metadata = MetaData()
+sa_metadata = MetaData()

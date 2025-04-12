@@ -1,12 +1,12 @@
 from sqlalchemy import Table, Column, Integer, String, Float, DateTime, Text
-from db import metadata
+from db import sa_metadata
 from datetime import datetime, timezone
 
 default=lambda: datetime.now(timezone.utc)
 
 tweets = Table(
     "tweets",
-    metadata,
+    sa_metadata,
     Column("id", String, primary_key=True),
     Column("token", String),
     Column("text", Text),
@@ -19,7 +19,7 @@ tweets = Table(
 
 tokens = Table(
     "tokens",
-    metadata,
+    sa_metadata,
     Column("token_symbol", String, primary_key=True),
     Column("token_name", String),
     Column("address", String),
