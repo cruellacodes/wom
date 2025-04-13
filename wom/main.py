@@ -1,5 +1,4 @@
-from datetime import datetime, time, timedelta, timezone
-from importlib import metadata
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query, Header, BackgroundTasks
 from dotenv import load_dotenv
 import logging
@@ -14,6 +13,7 @@ import os
 import random
 from db import DATABASE_URL, database, sa_metadata
 from models import tokens
+import time
 
 BROWSER_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
