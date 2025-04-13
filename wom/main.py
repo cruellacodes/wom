@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from importlib import metadata
 from fastapi import FastAPI, HTTPException, Query, Header, BackgroundTasks
 from dotenv import load_dotenv
@@ -79,19 +79,26 @@ async def fetch_tokens_from_db():
         for row in rows
     ]
 
+@app.get("/tokens")
+async def get_tokens():
+    print("Received request at /tokens")
+    start = time.time()
+    result = await fetch_tokens_from_db()
+    print(f"Fetched {len(result)} tokens in {time.time() - start:.2f}s")
+    return result
 
 # Endpoint to fetch token details from the database.
-@app.get("/tokens")
-async def get_tokens_details():
-    try:
-        tokens = await fetch_tokens_from_db()
-        if not tokens:
-            logging.info("No tokens available in the database.")
-            return {"message": "No tokens available"}
-        return tokens
-    except Exception as e:
-        logging.error(f"Error fetching token details: {e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+#@app.get("/tokens")
+#async def get_tokens_details():
+#    try:
+#        tokens = await fetch_tokens_from_db()
+#        if not tokens:
+#            logging.info("No tokens available in the database.")
+#            return {"message": "No tokens available"}
+#        return tokens
+#    except Exception as e:
+#        logging.error(f"Error fetching token details: {e}")
+#        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/stored-tweets/")
 async def get_stored_tweets_endpoint(token: str = Query(..., description="Token symbol")):
