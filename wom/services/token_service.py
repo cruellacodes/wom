@@ -7,18 +7,14 @@ from dotenv import load_dotenv
 from models import tokens
 from db import database
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import delete
+from datetime import timedelta
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
 api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
-
-DISK_PATH = os.getenv("DISK_PATH", "/tmp")  # fallback for local/testing
-DB_PATH = os.path.join(DISK_PATH, "tokens.db")
-
-if not os.path.exists(DISK_PATH) and not DISK_PATH.startswith("/data"):
-    os.makedirs(DISK_PATH, exist_ok=True)
 
 async def extract_and_format_symbol(token_symbol_raw):
     """Format the token symbol as a cashtag."""
@@ -151,14 +147,44 @@ async def store_tokens(tokens_data):
     await database.execute_many(query=query, values=values)
     logging.info("Tokens stored/updated in PostgreSQL successfully.")
 
-
 async def fetch_tokens():
     """
-    Pipeline: Fetch filtered tokens from Apify, store the tokens, and return them.
+    Pipeline: Fetch filtered tokens from Apify, store them, clean up old ones.
     """
     filtered_tokens = await get_filtered_pairs()
     if filtered_tokens:
         await store_tokens(filtered_tokens)
     else:
         logging.info("No tokens with recent Raydium pools to store.")
+
+    await delete_old_tokens()
     return filtered_tokens
+
+async def fetch_tokens_from_db():
+    query = tokens.select()
+    rows = await database.fetch_all(query)
+
+    return [
+        {
+            "Token": row["token_symbol"],
+            "Age": row["age_hours"],
+            "Volume": row["volume_usd"],
+            "MakerCount": row["maker_count"],
+            "Liquidity": row["liquidity_usd"],
+            "MarketCap": row["market_cap_usd"],
+            "dex_url": row["dex_url"],
+            "priceChange1h": row["pricechange1h"],
+            "WomScore": row["wom_score"],
+            "TweetCount": row["tweet_count"]
+        }
+        for row in rows
+    ]
+
+async def delete_old_tokens():
+    """
+    Delete tokens that were created more than 48 hours ago.
+    """
+    threshold = datetime.now(timezone.utc) - timedelta(hours=48)
+    query = delete(tokens).where(tokens.c.created_at < threshold)
+    deleted = await database.execute(query)
+    logging.info(f"[Cleanup] Deleted {deleted} old token(s).")
