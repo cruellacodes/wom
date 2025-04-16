@@ -1,4 +1,4 @@
-from sqlalchemy import Table, Column, Integer, String, Float, DateTime, Text
+from sqlalchemy import ForeignKey, Table, Column, Integer, String, Float, DateTime, Text
 from db import sa_metadata
 from datetime import datetime, timezone
 
@@ -8,7 +8,7 @@ tweets = Table(
     "tweets",
     sa_metadata,
     Column("id", String, primary_key=True),
-    Column("token", String),
+    Column("token", String, ForeignKey("tokens.token_symbol")),
     Column("text", Text),
     Column("followers_count", Integer, default=0),
     Column("user_name", String),
