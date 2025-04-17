@@ -111,8 +111,10 @@ async def get_filtered_pairs():
 
 async def store_tokens(tokens_data):
     """
-    Store tokens into the PostgreSQL 'tokens' table using async insert/update.
+    Store or update tokens in the 'tokens' table.
     """
+    now = datetime.now(timezone.utc)
+
     query = insert(tokens).on_conflict_do_update(
         index_elements=["token_symbol"],
         set_={
@@ -125,6 +127,8 @@ async def store_tokens(tokens_data):
             "market_cap_usd": tokens.c.market_cap_usd,
             "dex_url": tokens.c.dex_url,
             "pricechange1h": tokens.c.pricechange1h,
+            "last_seen_at": now,
+            "is_active": True,  # Reactivate if seen again
         }
     )
 
@@ -141,11 +145,27 @@ async def store_tokens(tokens_data):
             "market_cap_usd": token.get("market_cap_usd"),
             "dex_url": f"https://dexscreener.com/solana/{token.get('address')}",
             "pricechange1h": token.get("priceChange1h"), 
-            "created_at": datetime.now(timezone.utc),
+            "created_at": now,
+            "last_seen_at": now,
+            "is_active": True,
         })
 
     await database.execute_many(query=query, values=values)
-    logging.info("Tokens stored/updated in PostgreSQL successfully.")
+    logging.info("Tokens stored/updated in PostgreSQL with active status.")
+
+async def deactivate_stale_tokens(grace_period_hours=3):
+    """
+    Mark tokens as inactive if they haven't been seen in the last `grace_period_hours`.
+    """
+    threshold = datetime.now(timezone.utc) - timedelta(hours=grace_period_hours)
+    query = tokens.update().where(
+        tokens.c.last_seen_at < threshold,
+        tokens.c.is_active == True
+    ).values(is_active=False)
+    
+    updated = await database.execute(query)
+    logging.info(f"[Deactivation] Marked {updated} token(s) as inactive.")
+
 
 async def fetch_tokens():
     """
@@ -157,6 +177,7 @@ async def fetch_tokens():
     else:
         logging.info("No tokens with recent Raydium pools to store.")
 
+    await deactivate_stale_tokens(grace_period_hours=3)
     await delete_old_tokens()
     return filtered_tokens
 

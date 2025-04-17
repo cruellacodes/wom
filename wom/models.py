@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Table, Column, Integer, String, Float, DateTime, Text
+from sqlalchemy import Boolean, ForeignKey, Table, Column, Integer, String, Float, DateTime, Text
 from db import sa_metadata
 from datetime import datetime, timezone
 
@@ -33,4 +33,6 @@ tokens = Table(
     Column("wom_score", Float),
     Column("tweet_count", Integer),
     Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
+    Column("last_seen_at", DateTime(timezone=True), default=default),
+    Column("is_active", Boolean, default=True),
 )
