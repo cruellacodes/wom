@@ -3,9 +3,9 @@ from sqlalchemy import select, func
 from models import tokens
 from db import database
 
-router = APIRouter()
+tokens_router = APIRouter()
 
-@router.get("/tokens")
+@tokens_router.get("/tokens")
 async def get_tokens(
     page: int = Query(1, gt=0),
     limit: int = Query(20, le=100),
