@@ -22,6 +22,7 @@ load_dotenv()
 # Initialize Apify API token & task IDs
 api_token = os.getenv("APIFY_API_TOKEN")
 task_ids_str = os.getenv("WORKER_IDS")
+
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 if not task_ids_str:
@@ -121,6 +122,44 @@ async def fetch_stored_tweets(token: str):
         }
         for row in rows
     ]
+
+async def fetch_tweets_from_rapidapi(token_symbol: str) -> list:
+    """
+    Fetch recent tweets for a token using RapidAPI (Twitter Search Only).
+    """
+    rapidapi_key = os.getenv("RAPIDAPI_KEY")
+    rapidapi_host = os.getenv("RAPIDAPI_HOST")
+
+    print("RAPIDAPI_KEY:", os.getenv("RAPIDAPI_KEY"))
+    print("RAPIDAPI_HOST:", os.getenv("RAPIDAPI_HOST"))
+
+    if not rapidapi_key or not rapidapi_host:
+        raise ValueError("RAPIDAPI_KEY or RAPIDAPI_HOST is missing in environment variables.")
+
+    headers = {
+        "x-rapidapi-key": rapidapi_key,
+        "x-rapidapi-host": rapidapi_host
+    }
+
+    token_clean = token_symbol.replace("$", "").strip()
+    search_term = f"${token_clean}" if len(token_clean) <= 6 else f"#{token_clean}"
+
+    url = f"https://{rapidapi_host}/search.php?query={search_term}&search_type=Latest"
+    logging.info(f"[RapidAPI] Fetching tweets for {search_term}")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+
+            if not data.get("data"):
+                logging.info(f"No tweets found for {token_symbol}. Response: {data}")
+
+            return data.get("data", [])
+        except Exception as e:
+            logging.error(f"[RapidAPI] Failed to fetch tweets for {token_symbol}: {e}")
+            return []
 
 async def fetch_tweets(token, task_id):
     """
@@ -296,8 +335,7 @@ async def fetch_and_analyze(token_symbol, store=True):
     logging.info(f"Fetching and analyzing tweets for {token_symbol}...")
 
     # Step 1: Fetch tweets (DO NOT store yet)
-    task_cycle = itertools.cycle(task_ids)
-    raw_tweets = await fetch_tweets(token_symbol, next(task_cycle))
+    raw_tweets = await fetch_tweets_from_rapidapi(token_symbol)
 
     if not raw_tweets:
         logging.info(f"No tweets found for {token_symbol}.")
@@ -347,7 +385,6 @@ async def fetch_and_analyze(token_symbol, store=True):
     logging.info(f"Completed analysis for {token_symbol}. WOM Score: {result['wom_score']}")
     return result
 
-
 async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
     """
     Filters and structures raw tweets.
@@ -358,20 +395,27 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
     Args:
         raw_tweets (list): List of raw tweet data.
+        token_symbol (str): Token being analyzed.
         min_followers (int): Minimum followers required.
 
     Returns:
-        list: Processed tweets.
+        dict: Processed tweets grouped under token symbol.
     """
     processed_tweets = []
+
     for tweet in raw_tweets:
+        if tweet.get("type") != "tweet":
+            continue
+
+        user_info = tweet.get("user_info", {})
+
         tweet_data = {
-            "id": tweet.get("id"),
-            "text": tweet.get("fullText", "").strip(),
-            "user_name": tweet.get("author", {}).get("userName", ""),
-            "followers_count": tweet.get("author", {}).get("followers", 0),
-            "profile_pic": tweet.get("author", {}).get("profilePicture", ""),
-            "created_at": tweet.get("createdAt", ""),
+            "id": tweet.get("tweet_id"),
+            "text": tweet.get("text", "").strip(),
+            "user_name": user_info.get("screen_name", ""),
+            "followers_count": user_info.get("followers_count", 0),
+            "profile_pic": user_info.get("avatar", ""),
+            "created_at": tweet.get("created_at", ""),
         }
 
         # Convert timestamp
@@ -386,6 +430,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
             processed_tweets.append(tweet_data)
 
     return {token_symbol: processed_tweets}
+
 
 
 async def update_token_data(token_symbol: str, wom_score: float, tweet_count: int):
@@ -407,3 +452,13 @@ async def update_token_data(token_symbol: str, wom_score: float, tweet_count: in
         logging.info(f"Updated tokens table: {token_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
     except Exception as e:
         logging.error(f"Error updating token data for {token_symbol}: {e}")
+
+async def get_active_tokens():
+    query = tokens.select().where(tokens.c.is_active == True)
+    rows = await database.fetch_all(query)
+    return [row["token_symbol"] for row in rows]
+
+async def run_tweet_pipeline():
+    active_tokens = await get_active_tokens()
+    tasks = [fetch_and_analyze(token) for token in active_tokens]
+    await asyncio.gather(*tasks)
