@@ -61,7 +61,7 @@ async def store_tweets(token: str, processed_tweets: list):
     
 async def fetch_stored_tweets(token: str):
     """Fetch stored tweets for a specific token from PostgreSQL."""
-    query = tweets.select().where(tweets.c.token == token).order_by(tweets.c.id.desc())
+    query = tweets.select().where(tweets.c.token == token).order_by(tweets.c.created_at.desc())
     rows = await database.fetch_all(query)
 
     return [
