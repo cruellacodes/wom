@@ -1,5 +1,4 @@
 import asyncio
-import itertools
 import os
 import httpx
 import logging
@@ -18,18 +17,6 @@ logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
 # Load environment variables
 load_dotenv()
-
-# Initialize Apify API token & task IDs
-api_token = os.getenv("APIFY_API_TOKEN")
-task_ids_str = os.getenv("WORKER_IDS")
-
-if not api_token:
-    raise ValueError("Apify API token not found in environment variables!")
-if not task_ids_str:
-    raise ValueError("WORKER_IDS not set in environment variables!")
-
-# Parse task IDs
-task_ids = [tid.strip() for tid in task_ids_str.split(",") if tid.strip()]
 
 # Load CryptoBERT model
 MODEL_NAME = "ElKulako/cryptobert"
@@ -50,7 +37,7 @@ async def store_tweets(token: str, processed_tweets: list):
     try:
         values = [
             {
-                "id": tweet["id"],
+                "tweet_id": tweet["tweet_id"],
                 "token": token,
                 "text": tweet["text"],
                 "user_name": tweet["user_name"],
@@ -62,17 +49,8 @@ async def store_tweets(token: str, processed_tweets: list):
             for tweet in processed_tweets
         ]
 
-        stmt = insert(tweets).on_conflict_do_update(
-            index_elements=["id"],
-            set_={
-                "token": tweets.c.token,
-                "text": tweets.c.text,
-                "user_name": tweets.c.user_name,
-                "followers_count": tweets.c.followers_count,
-                "profile_pic": tweets.c.profile_pic,
-                "created_at": tweets.c.created_at,
-                "wom_score": tweets.c.wom_score,
-            }
+        stmt = insert(tweets).on_conflict_do_nothing(
+            index_elements=["tweet_id"]
         )
 
         await database.execute_many(query=stmt, values=values)
@@ -80,30 +58,6 @@ async def store_tweets(token: str, processed_tweets: list):
 
     except Exception as e:
         logging.error(f"Error inserting tweets into PostgreSQL: {e}")
-
-
-async def update_task_input(task_id, new_input):
-    """
-    Update the task input using a direct HTTP PUT request.
-    
-    Args:
-        task_id (str): The Apify task ID.
-        new_input (dict): The new input for the task.
-        
-    Returns:
-        dict: The updated task input as returned by the Apify API.
-    """
-    url = f"https://api.apify.com/v2/actor-tasks/{task_id}/input"
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Authorization": f"Bearer {api_token}"
-    }
-    async with httpx.AsyncClient() as client:
-        response = await client.put(url, headers=headers, json=new_input)
-        response.raise_for_status()
-        return response.json()
-    
     
 async def fetch_stored_tweets(token: str):
     """Fetch stored tweets for a specific token from PostgreSQL."""
@@ -124,14 +78,8 @@ async def fetch_stored_tweets(token: str):
     ]
 
 async def fetch_tweets_from_rapidapi(token_symbol: str) -> list:
-    """
-    Fetch recent tweets for a token using RapidAPI (Twitter Search Only).
-    """
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
     rapidapi_host = os.getenv("RAPIDAPI_HOST")
-
-    print("RAPIDAPI_KEY:", os.getenv("RAPIDAPI_KEY"))
-    print("RAPIDAPI_HOST:", os.getenv("RAPIDAPI_HOST"))
 
     if not rapidapi_key or not rapidapi_host:
         raise ValueError("RAPIDAPI_KEY or RAPIDAPI_HOST is missing in environment variables.")
@@ -144,81 +92,28 @@ async def fetch_tweets_from_rapidapi(token_symbol: str) -> list:
     token_clean = token_symbol.replace("$", "").strip()
     search_term = f"${token_clean}" if len(token_clean) <= 6 else f"#{token_clean}"
 
-    url = f"https://{rapidapi_host}/search.php?query={search_term}&search_type=Latest"
+    url = f"https://{rapidapi_host}/search.php"
+    params = {
+        "query": search_term,
+        "search_type": "Latest"
+    }
+
     logging.info(f"[RapidAPI] Fetching tweets for {search_term}")
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers)
+            response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
             data = response.json()
 
-            if not data.get("data"):
-                logging.info(f"No tweets found for {token_symbol}. Response: {data}")
+            if not data.get("timeline"):
+                logging.warning(f"[RapidAPI] No timeline data found for {token_symbol}. Full response: {data}")
 
-            return data.get("data", [])
+            return data.get("timeline", [])
+
         except Exception as e:
             logging.error(f"[RapidAPI] Failed to fetch tweets for {token_symbol}: {e}")
             return []
-
-async def fetch_tweets(token, task_id):
-    """
-    Fetch tweets using Apify. If `store=True`, store them in the DB.
-    Otherwise, return the tweets without storing.
-    """
-    search_value = token.lower().replace("$", "")
-    search_term = f"${search_value}" if len(token) <= 6 else f"#{search_value}"
-
-    new_input = {
-        "searchTerms": [search_term],
-        "sortBy": "Latest",
-        "maxItems": 50,
-        "minRetweets": 0,
-        "minLikes": 0,
-        "minReplies": 0,
-        "tweetLanguage": "en"
-    }
-
-    try:
-        logging.info(f"Updating task input for {token} using task {task_id}...")
-        await update_task_input(task_id, new_input)
-
-        await asyncio.sleep(5)
-
-        async with httpx.AsyncClient() as client:
-            run_response = await client.post(
-                f"https://api.apify.com/v2/actor-tasks/{task_id}/runs?token={api_token}"
-            )
-            run_response.raise_for_status()
-            run_id = run_response.json()["data"]["id"]
-
-            while True:
-                await asyncio.sleep(7)
-                run_status = await client.get(
-                    f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
-                )
-                run_status.raise_for_status()
-                status = run_status.json()["data"]["status"]
-                if status == "SUCCEEDED":
-                    break
-                elif status in ["FAILED", "TIMED_OUT", "ABORTED"]:
-                    raise RuntimeError(f"Apify run failed with status: {status}")
-
-            dataset_id = run_status.json()["data"]["defaultDatasetId"]
-            dataset_response = await client.get(
-                f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
-            )
-            dataset_response.raise_for_status()
-            fetched_tweets = dataset_response.json()
-        if fetched_tweets:
-            logging.info(f"New tweets found: {len(fetched_tweets)} for {token}")
-
-        return fetched_tweets
-
-    except Exception as e:
-        logging.error(f"Error fetching tweets for {token} using task {task_id}: {e}")
-        return []
-    
 
 async def analyze_sentiment(text):
     """Perform sentiment analysis on a tweet using CryptoBERT pipeline, returning a score from 0 to 2."""
@@ -334,11 +229,11 @@ async def fetch_and_analyze(token_symbol, store=True):
 
     logging.info(f"Fetching and analyzing tweets for {token_symbol}...")
 
-    # Step 1: Fetch tweets (DO NOT store yet)
+    # Step 1: Fetch tweets 
     raw_tweets = await fetch_tweets_from_rapidapi(token_symbol)
 
     if not raw_tweets:
-        logging.info(f"No tweets found for {token_symbol}.")
+        logging.error(f"No tweets found for {token_symbol}.")
         return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
 
     # Step 2: Process tweets (filter and clean)
@@ -346,7 +241,7 @@ async def fetch_and_analyze(token_symbol, store=True):
     processed_tweets = processed_tweets_dict.get(token_symbol, [])
 
     if not processed_tweets:
-        logging.info(f"All tweets filtered out for {token_symbol}.")
+        logging.error(f"All tweets filtered out for {token_symbol}.")
         return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
 
     # Step 3: Analyze sentiment
@@ -430,8 +325,6 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
             processed_tweets.append(tweet_data)
 
     return {token_symbol: processed_tweets}
-
-
 
 async def update_token_data(token_symbol: str, wom_score: float, tweet_count: int):
     """Updates the token table with WOM Score and tweet count using PostgreSQL upsert."""

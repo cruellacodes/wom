@@ -7,7 +7,7 @@ default=lambda: datetime.now(timezone.utc)
 tweets = Table(
     "tweets",
     sa_metadata,
-    Column("id", String, primary_key=True),
+    Column("tweet_id", String, primary_key=True), 
     Column("token", String, ForeignKey("tokens.token_symbol")),
     Column("text", Text),
     Column("followers_count", Integer, default=0),
