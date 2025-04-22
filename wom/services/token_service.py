@@ -8,7 +8,9 @@ from models import tokens
 from db import database
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import delete
+from sqlalchemy import select
 from datetime import timedelta
+from models import tweets  
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 load_dotenv()
@@ -203,9 +205,25 @@ async def fetch_tokens_from_db():
 
 async def delete_old_tokens():
     """
-    Delete tokens that were created more than 48 hours ago.
+    Delete tokens older than 48 hours and their associated tweets.
     """
     threshold = datetime.now(timezone.utc) - timedelta(hours=48)
-    query = delete(tokens).where(tokens.c.created_at < threshold)
-    deleted = await database.execute(query)
-    logging.info(f"[Cleanup] Deleted {deleted} old token(s).")
+
+    # Step 1: Find tokens older than 48h
+    old_tokens_query = select(tokens.c.token_symbol).where(tokens.c.created_at < threshold)
+    old_token_rows = await database.fetch_all(old_tokens_query)
+    old_symbols = [row["token_symbol"] for row in old_token_rows]
+
+    if not old_symbols:
+        logging.info("[Cleanup] No old tokens found for deletion.")
+        return
+
+    # Step 2: Delete tweets associated with those tokens
+    delete_tweets_query = delete(tweets).where(tweets.c.token.in_(old_symbols))
+    deleted_tweets = await database.execute(delete_tweets_query)
+
+    # Step 3: Delete the tokens themselves
+    delete_tokens_query = delete(tokens).where(tokens.c.token_symbol.in_(old_symbols))
+    deleted_tokens = await database.execute(delete_tokens_query)
+
+    logging.info(f"[Cleanup] Deleted {deleted_tokens} old token(s) and {deleted_tweets} associated tweet(s).")
