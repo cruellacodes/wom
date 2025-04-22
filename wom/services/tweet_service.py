@@ -305,7 +305,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
         user_info = tweet.get("user_info", {})
 
         tweet_data = {
-            "id": tweet.get("tweet_id"),
+            "tweet_id": tweet.get("tweet_id"),
             "text": tweet.get("text", "").strip(),
             "user_name": user_info.get("screen_name", ""),
             "followers_count": user_info.get("followers_count", 0),
