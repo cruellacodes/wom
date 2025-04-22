@@ -112,48 +112,43 @@ async def get_filtered_pairs():
     return filtered_tokens
 
 async def store_tokens(tokens_data):
-    """
-    Store or update tokens in the 'tokens' table.
-    """
     now = datetime.now(timezone.utc)
 
-    query = insert(tokens).on_conflict_do_update(
-        index_elements=["token_symbol"],
-        set_={
-            "token_name": tokens.c.token_name,
-            "address": tokens.c.address,
-            "age_hours": tokens.c.age_hours,
-            "volume_usd": tokens.c.volume_usd,
-            "maker_count": tokens.c.maker_count,
-            "liquidity_usd": tokens.c.liquidity_usd,
-            "market_cap_usd": tokens.c.market_cap_usd,
-            "dex_url": tokens.c.dex_url,
-            "pricechange1h": tokens.c.pricechange1h,
-            "last_seen_at": now,
-            "is_active": True,  # Reactivate if seen again
-        }
-    )
-
-    values = []
     for token in tokens_data:
-        values.append({
-            "token_symbol": token.get("token_symbol"),
-            "token_name": token.get("token_name"),
-            "address": token.get("address"),
-            "age_hours": token.get("age_hours"),
-            "volume_usd": token.get("volume_usd"),
-            "maker_count": token.get("maker_count"),
-            "liquidity_usd": token.get("liquidity_usd"),
-            "market_cap_usd": token.get("market_cap_usd"),
-            "dex_url": f"https://dexscreener.com/solana/{token.get('address')}",
-            "pricechange1h": token.get("priceChange1h"), 
-            "created_at": now,
-            "last_seen_at": now,
-            "is_active": True,
-        })
+        stmt = insert(tokens).values(
+            token_symbol=token.get("token_symbol"),
+            token_name=token.get("token_name"),
+            address=token.get("address"),
+            age_hours=token.get("age_hours"),
+            volume_usd=token.get("volume_usd"),
+            maker_count=token.get("maker_count"),
+            liquidity_usd=token.get("liquidity_usd"),
+            market_cap_usd=token.get("market_cap_usd"),
+            dex_url=f"https://dexscreener.com/solana/{token.get('address')}",
+            pricechange1h=token.get("priceChange1h"),
+            created_at=now,
+            last_seen_at=now,
+            is_active=True
+        ).on_conflict_do_update(
+            index_elements=["token_symbol"],
+            set_={
+                "token_name": tokens.c.token_name,
+                "address": tokens.c.address,
+                "age_hours": tokens.c.age_hours,
+                "volume_usd": tokens.c.volume_usd,
+                "maker_count": tokens.c.maker_count,
+                "liquidity_usd": tokens.c.liquidity_usd,
+                "market_cap_usd": tokens.c.market_cap_usd,
+                "dex_url": tokens.c.dex_url,
+                "pricechange1h": tokens.c.pricechange1h,
+                "last_seen_at": now,
+                "is_active": True,
+            }
+        )
 
-    await database.execute_many(query=query, values=values)
-    logging.info("Tokens stored/updated in PostgreSQL with active status.")
+        await database.execute(stmt)
+
+    logging.info(f"Stored/Updated {len(tokens_data)} tokens.")
 
 async def deactivate_stale_tokens(grace_period_hours=3):
     """
