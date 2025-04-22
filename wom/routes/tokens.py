@@ -18,7 +18,7 @@ async def get_tokens(
         base_query = base_query.where(tokens.c.is_active == True)
 
     data_query = base_query.limit(limit).offset(offset)
-    count_query = select([func.count()]).select_from(base_query.alias("sub"))
+    count_query = select(func.count()).select_from(base_query.alias("sub"))
 
     rows = await database.fetch_all(data_query)
     total = await database.fetch_val(count_query)
