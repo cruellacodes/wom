@@ -66,7 +66,7 @@ async def fetch_stored_tweets(token: str):
 
     return [
         {
-            "id": row["id"],
+            "tweet_id": row["tweet_id"],
             "text": row["text"],
             "user_name": row["user_name"],
             "followers_count": row["followers_count"],
