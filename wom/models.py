@@ -1,21 +1,8 @@
-from sqlalchemy import Boolean, ForeignKey, Table, Column, Integer, String, Float, DateTime, Text
-from db import sa_metadata
+from sqlalchemy import Table, Column, String, Text, Integer, Float, Boolean, DateTime, ForeignKey, MetaData
 from datetime import datetime, timezone
 
-default=lambda: datetime.now(timezone.utc)
-
-tweets = Table(
-    "tweets",
-    sa_metadata,
-    Column("tweet_id", String, primary_key=True), 
-    Column("token", String, ForeignKey("tokens.token_symbol")),
-    Column("text", Text),
-    Column("followers_count", Integer, default=0),
-    Column("user_name", String),
-    Column("profile_pic", String),
-    Column("created_at", DateTime(timezone=True)),
-    Column("wom_score", Float),
-)
+sa_metadata = MetaData()
+default = lambda: datetime.now(timezone.utc)
 
 tokens = Table(
     "tokens",
@@ -35,4 +22,17 @@ tokens = Table(
     Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
     Column("last_seen_at", DateTime(timezone=True), default=default),
     Column("is_active", Boolean, default=True),
+)
+
+tweets = Table(
+    "tweets",
+    sa_metadata,
+    Column("tweet_id", String, primary_key=True), 
+    Column("token_symbol", String, ForeignKey("tokens.token_symbol")),
+    Column("text", Text),
+    Column("followers_count", Integer, default=0),
+    Column("user_name", String),
+    Column("profile_pic", String),
+    Column("created_at", DateTime(timezone=True)),
+    Column("wom_score", Float),
 )

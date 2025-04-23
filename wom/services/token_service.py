@@ -115,7 +115,8 @@ async def store_tokens(tokens_data):
     now = datetime.now(timezone.utc)
 
     for token in tokens_data:
-        token_symbol = token.get("token_symbol", "").upper()
+        token_symbol = token.get("token_symbol", "").lower()
+
         stmt = insert(tokens).values(
             token_symbol=token_symbol,
             token_name=token.get("token_name"),
@@ -133,15 +134,15 @@ async def store_tokens(tokens_data):
         ).on_conflict_do_update(
             index_elements=["token_symbol"],
             set_={
-                "token_name": tokens.c.token_name,
-                "address": tokens.c.address,
-                "age_hours": tokens.c.age_hours,
-                "volume_usd": tokens.c.volume_usd,
-                "maker_count": tokens.c.maker_count,
-                "liquidity_usd": tokens.c.liquidity_usd,
-                "market_cap_usd": tokens.c.market_cap_usd,
-                "dex_url": tokens.c.dex_url,
-                "pricechange1h": tokens.c.pricechange1h,
+                "token_name": stmt.excluded.token_name,
+                "address": stmt.excluded.address,
+                "age_hours": stmt.excluded.age_hours,
+                "volume_usd": stmt.excluded.volume_usd,
+                "maker_count": stmt.excluded.maker_count,
+                "liquidity_usd": stmt.excluded.liquidity_usd,
+                "market_cap_usd": stmt.excluded.market_cap_usd,
+                "dex_url": stmt.excluded.dex_url,
+                "pricechange1h": stmt.excluded.pricechange1h,
                 "last_seen_at": now,
                 "is_active": True,
             }
@@ -215,7 +216,7 @@ async def delete_old_tokens():
         return
 
     # Step 2: Delete tweets associated with those tokens
-    delete_tweets_query = delete(tweets).where(tweets.c.token.in_(old_symbols))
+    delete_tweets_query = delete(tweets).where(tweets.c.token_symbol.in_(old_symbols))
     deleted_tweets = await database.execute(delete_tweets_query)
 
     # Step 3: Delete the tokens themselves
