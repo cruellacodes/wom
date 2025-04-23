@@ -10,7 +10,7 @@ async def get_stored_tweets_endpoint(token_symbol: str = Query(...)):
         tweets = await fetch_stored_tweets(token_symbol)
         if not tweets:
             return {"message": f"No stored tweets found for {token_symbol}"}
-        return {"token": token_symbol, "tweets": tweets}
+        return {"token_symbol": token_symbol, "tweets": tweets}
     except Exception as e:
         logging.error(f"Error fetching stored tweets for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
@@ -20,7 +20,7 @@ async def get_stored_tweets_endpoint(token_symbol: str = Query(...)):
 async def get_tweet_volume_endpoint(token_symbol: str = Query(...)):
     try:
         tweet_volume = await fetch_tweet_volume_last_6h(token_symbol)
-        return {"token": token_symbol, "tweet_volume": tweet_volume}
+        return {"token_symbol": token_symbol, "tweet_volume": tweet_volume}
     except Exception as e:
         logging.error(f"Error fetching tweet volume for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
@@ -30,7 +30,7 @@ async def get_tweets(token_symbol: str):
     try:
         tweets_data = await fetch_and_analyze(token_symbol)
         return {
-            "token": token_symbol,
+            "token_symbol": token_symbol,
             "tweets": tweets_data.get("tweets", []),
             "wom_score": tweets_data.get("wom_score", 1)
         }
