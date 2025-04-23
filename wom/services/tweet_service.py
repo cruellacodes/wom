@@ -32,14 +32,15 @@ async def store_tweets(token: str, processed_tweets: list):
     if not processed_tweets:
         logging.info(f"No new tweets to store for {token}.")
         return
-
+    
+    normalized_token = token.lower()
     logging.info(f"Attempting to store {len(processed_tweets)} tweets for {token}.")
 
     try:
         values = [
             {
                 "tweet_id": tweet["tweet_id"],
-                "token": token,
+                "token_symbol": normalized_token,
                 "text": tweet["text"],
                 "user_name": tweet["user_name"],
                 "followers_count": tweet["followers_count"],
@@ -62,7 +63,8 @@ async def store_tweets(token: str, processed_tweets: list):
     
 async def fetch_stored_tweets(token: str):
     """Fetch stored tweets for a specific token from PostgreSQL."""
-    query = tweets.select().where(func.upper(tweets.c.token) == token.upper()).order_by(tweets.c.created_at.desc())
+    normalized_token = token.lower() 
+    query = tweets.select().where(tweets.c.token_symbol == normalized_token).order_by(tweets.c.created_at.desc())
     rows = await database.fetch_all(query)
 
     return [
@@ -194,7 +196,7 @@ async def fetch_tweet_volume_last_6h(token: str):
         tweets.select()
         .with_only_columns(tweets.c.created_at) 
         .where(
-            (tweets.c.token == token) &
+            (tweets.c.token_symbol == token) &
             (tweets.c.created_at >= six_hours_ago)
         )
     )
@@ -329,8 +331,10 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
 async def update_token_data(token_symbol: str, wom_score: float, tweet_count: int):
     """Updates the token table with WOM Score and tweet count using PostgreSQL upsert."""
+    normalized_symbol = token_symbol.lower() 
+
     stmt = insert(tokens).values(
-        token_symbol=token_symbol,
+        token_symbol=normalized_symbol,
         wom_score=wom_score,
         tweet_count=tweet_count
     ).on_conflict_do_update(
@@ -343,9 +347,9 @@ async def update_token_data(token_symbol: str, wom_score: float, tweet_count: in
 
     try:
         await database.execute(stmt)
-        logging.info(f"Updated tokens table: {token_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
+        logging.info(f"Updated tokens table: {normalized_symbol} -> WOM Score: {wom_score}, Tweet Count: {tweet_count}")
     except Exception as e:
-        logging.error(f"Error updating token data for {token_symbol}: {e}")
+        logging.error(f"Error updating token data for {normalized_symbol}: {e}")
 
 async def get_active_tokens():
     query = tokens.select().where(tokens.c.is_active == True)
