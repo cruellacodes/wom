@@ -41,11 +41,12 @@ async def get_filtered_pairs():
         "fromPage": 1,
         "toPage": 1,
     }
+
     MIN_MAKERS = 7000
     # MIN_VOLUME = 200_000
     # MIN_MARKET_CAP = 250_000
     # MIN_LIQUIDITY = 100_000
-    MAX_AGE = 24  # hours
+    MAX_AGE = 48  # hours
 
     filtered_tokens = []
     unique_symbols = set()
@@ -58,7 +59,7 @@ async def get_filtered_pairs():
         response.raise_for_status()
         run_id = response.json()["data"]["id"]
 
-        # Wait for the run to complete
+        # Wait for Apify run to complete
         while True:
             run_status = await client.get(
                 f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
@@ -71,7 +72,7 @@ async def get_filtered_pairs():
                 raise RuntimeError(f"Apify run failed with status: {status}")
             await asyncio.sleep(5)
 
-        # Fetch dataset items
+        # Fetch the dataset items
         dataset_id = run_status.json()["data"]["defaultDatasetId"]
         dataset_response = await client.get(
             f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
@@ -83,31 +84,34 @@ async def get_filtered_pairs():
         for item in items:
             token_name = item.get("tokenName", "Unknown")
             token_symbol_raw = item.get("tokenSymbol", "Unknown")
-            token_symbol = await extract_and_format_symbol(token_symbol_raw)
+            symbol = (await extract_and_format_symbol(token_symbol_raw)).lower()  # Normalize early
+
             age = item.get("age", None)
             volume_usd = item.get("volumeUsd", 0)
             maker_count = item.get("makerCount", 0)
             liquidity_usd = item.get("liquidityUsd", 0)
             market_cap_usd = item.get("marketCapUsd", 0)
-            priceChange1h = item.get("priceChange1h", 0)
+            price_change_1h = item.get("priceChange1h", 0)
             address = item.get("address", "N/A")
 
-            if (age is not None and age <= MAX_AGE and
-                maker_count >= MIN_MAKERS ):
-                if token_symbol not in unique_symbols:
-                    unique_symbols.add(token_symbol)
-                    filtered_tokens.append({
-                        "token_name": token_name,
-                        "token_symbol": token_symbol,
-                        "address": address,
-                        "age_hours": age,
-                        "volume_usd": volume_usd,
-                        "maker_count": maker_count,
-                        "liquidity_usd": liquidity_usd,
-                        "market_cap_usd": market_cap_usd,
-                        "priceChange1h" : priceChange1h,
-                        "address" : address
-                    })
+            if (
+                age is not None and age <= MAX_AGE and
+                maker_count >= MIN_MAKERS and
+                symbol not in unique_symbols
+            ):
+                unique_symbols.add(symbol)
+                filtered_tokens.append({
+                    "token_name": token_name,
+                    "token_symbol": symbol,
+                    "address": address,
+                    "age_hours": age,
+                    "volume_usd": volume_usd,
+                    "maker_count": maker_count,
+                    "liquidity_usd": liquidity_usd,
+                    "market_cap_usd": market_cap_usd,
+                    "priceChange1h": price_change_1h
+                })
+
     logging.info(f"Filtering complete. Total unique tokens: {len(filtered_tokens)}.")
     return filtered_tokens
 
@@ -130,7 +134,9 @@ async def store_tokens(tokens_data):
             pricechange1h=token.get("priceChange1h"),
             created_at=now,
             last_seen_at=now,
-            is_active=True
+            is_active=True,
+            wom_score=1.0,       
+            tweet_count=0 
         ).on_conflict_do_update(
             index_elements=["token_symbol"],
             set_={
@@ -145,6 +151,8 @@ async def store_tokens(tokens_data):
                 "pricechange1h": stmt.excluded.pricechange1h,
                 "last_seen_at": now,
                 "is_active": True,
+                "wom_score": stmt.excluded.wom_score,
+                "tweet_count": stmt.excluded.tweet_count,
             }
         )
 
