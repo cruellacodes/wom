@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
-from services.tweet_service import fetch_stored_tweets, fetch_tweet_volume_last_6h, fetch_and_analyze
+from services.tweet_service import fetch_stored_tweets, fetch_tweet_volume_last_6h, fetch_and_analyze, fetch_tweet_volume_buckets
 import logging
 
 tweets_router = APIRouter()
@@ -36,4 +36,13 @@ async def get_tweets(token_symbol: str):
         }
     except Exception as e:
         logging.error(f"Error fetching tweets for {token_symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@tweets_router.get("/tweet-volume-buckets/")
+async def get_tweet_volume_buckets_endpoint():
+    try:
+        volume_data = await fetch_tweet_volume_buckets()
+        return {"volume_buckets": volume_data}
+    except Exception as e:
+        logging.error(f"Error fetching tweet volume buckets: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")

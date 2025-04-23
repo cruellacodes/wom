@@ -11,7 +11,8 @@ from transformers import TextClassificationPipeline
 from db import database
 from models import tokens, tweets
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import func
+from collections import defaultdict
+from sqlalchemy import select
 
 # Configure logging
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -360,3 +361,30 @@ async def run_tweet_pipeline():
     active_tokens = await get_active_tokens()
     tasks = [fetch_and_analyze(token) for token in active_tokens]
     await asyncio.gather(*tasks)
+
+async def fetch_tweet_volume_buckets():
+    now = datetime.utcnow()
+    buckets = {
+        "1h": now - timedelta(hours=1),
+        "6h": now - timedelta(hours=6),
+        "12h": now - timedelta(hours=12),
+        "24h": now - timedelta(hours=24),
+        "48h": now - timedelta(hours=48),
+    }
+
+    query = select([
+        tweets.c.token_symbol,
+        tweets.c.created_at
+    ])
+    rows = await database.fetch_all(query)
+
+    volume = defaultdict(lambda: {"1h": 0, "6h": 0, "12h": 0, "24h": 0, "48h": 0})
+    for row in rows:
+        symbol = row["token_symbol"].lower()
+        created = row["created_at"]
+
+        for k, dt in buckets.items():
+            if created >= dt:
+                volume[symbol][k] += 1
+
+    return dict(volume)
