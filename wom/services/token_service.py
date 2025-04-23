@@ -1,38 +1,39 @@
 import asyncio
-from datetime import datetime, timezone
-import os
+from datetime import datetime, timedelta, timezone
 import logging
+import os
 import httpx
 from dotenv import load_dotenv
-from models import tokens
-from db import database
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import delete
-from sqlalchemy import select
-from datetime import timedelta
-from models import tweets  
+from sqlalchemy import delete, select
+from db import database
+from models import tokens, tweets
 
+# Logging setup
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
+
+# Load environment variables
 load_dotenv()
 api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
-async def extract_and_format_symbol(token_symbol_raw):
-    """Format the token symbol as a cashtag."""
+# ────────────────────────────────────────────
+# Token Extraction
+# ────────────────────────────────────────────
+async def extract_and_format_symbol(raw: str) -> str:
     try:
-        parts = token_symbol_raw.split()
-        if len(parts) > 1 and parts[1] in ["DLMM", "CLMM", "CPMM"]:
-            symbol = parts[2]
-        else:
-            symbol = parts[1]
+        parts = raw.split()
+        symbol = parts[2] if len(parts) > 1 and parts[1] in ["DLMM", "CLMM", "CPMM"] else parts[1]
         return f"${symbol.strip()}"
     except (IndexError, AttributeError) as e:
-        logging.error(f"Error formatting token symbol from '{token_symbol_raw}': {e}")
+        logging.error(f"Failed to parse token symbol: {raw} – {e}")
         return "$Unknown"
 
+# ────────────────────────────────────────────
+# Fetch & Filter Tokens
+# ────────────────────────────────────────────
 async def get_filtered_pairs():
-    """Fetch tokens from Apify and apply filtering criteria."""
     run_input = {
         "chainName": "solana",
         "filterArgs": [
@@ -50,76 +51,69 @@ async def get_filtered_pairs():
 
     filtered_tokens = []
     unique_symbols = set()
+    MIN_MAKERS = 7000
+    MAX_AGE = 48
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"https://api.apify.com/v2/acts/crypto-scraper~dexscreener-tokens-scraper/runs?token={api_token}",
-            json=run_input,
+            json=run_input
         )
-        response.raise_for_status()
         run_id = response.json()["data"]["id"]
 
-        # Wait for Apify run to complete
+        # Wait for Apify to finish
         while True:
-            run_status = await client.get(
+            status_resp = await client.get(
                 f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
             )
-            run_status.raise_for_status()
-            status = run_status.json()["data"]["status"]
+            status = status_resp.json()["data"]["status"]
             if status == "SUCCEEDED":
                 break
-            elif status in ["FAILED", "TIMED_OUT", "ABORTED"]:
+            if status in ["FAILED", "TIMED_OUT", "ABORTED"]:
                 raise RuntimeError(f"Apify run failed with status: {status}")
             await asyncio.sleep(5)
 
-        # Fetch the dataset items
-        dataset_id = run_status.json()["data"]["defaultDatasetId"]
-        dataset_response = await client.get(
+        dataset_id = status_resp.json()["data"]["defaultDatasetId"]
+        data_resp = await client.get(
             f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
         )
-        dataset_response.raise_for_status()
-        items = dataset_response.json()
+        items = data_resp.json()
 
-        logging.info("Processing and filtering fetched token data.")
+        logging.info("Filtering fetched token data...")
+
         for item in items:
-            token_name = item.get("tokenName", "Unknown")
-            token_symbol_raw = item.get("tokenSymbol", "Unknown")
-            symbol = (await extract_and_format_symbol(token_symbol_raw)).lower()  # Normalize early
-
-            age = item.get("age", None)
-            volume_usd = item.get("volumeUsd", 0)
-            maker_count = item.get("makerCount", 0)
-            liquidity_usd = item.get("liquidityUsd", 0)
-            market_cap_usd = item.get("marketCapUsd", 0)
-            price_change_1h = item.get("priceChange1h", 0)
-            address = item.get("address", "N/A")
+            token_symbol = await extract_and_format_symbol(item.get("tokenSymbol", ""))
+            token_symbol = token_symbol.lower()
 
             if (
-                age is not None and age <= MAX_AGE and
-                maker_count >= MIN_MAKERS and
-                symbol not in unique_symbols
+                item.get("age", 0) <= MAX_AGE and
+                item.get("makerCount", 0) >= MIN_MAKERS and
+                token_symbol not in unique_symbols
             ):
-                unique_symbols.add(symbol)
+                unique_symbols.add(token_symbol)
                 filtered_tokens.append({
-                    "token_name": token_name,
-                    "token_symbol": symbol,
-                    "address": address,
-                    "age_hours": age,
-                    "volume_usd": volume_usd,
-                    "maker_count": maker_count,
-                    "liquidity_usd": liquidity_usd,
-                    "market_cap_usd": market_cap_usd,
-                    "priceChange1h": price_change_1h
+                    "token_symbol": token_symbol,
+                    "token_name": item.get("tokenName", "Unknown"),
+                    "address": item.get("address", "N/A"),
+                    "age_hours": item.get("age", 0),
+                    "volume_usd": item.get("volumeUsd", 0),
+                    "maker_count": item.get("makerCount", 0),
+                    "liquidity_usd": item.get("liquidityUsd", 0),
+                    "market_cap_usd": item.get("marketCapUsd", 0),
+                    "priceChange1h": item.get("priceChange1h", 0)
                 })
 
-    logging.info(f"Filtering complete. Total unique tokens: {len(filtered_tokens)}.")
+    logging.info(f"Filtered {len(filtered_tokens)} tokens.")
     return filtered_tokens
 
+# ────────────────────────────────────────────
+# Store Tokens
+# ────────────────────────────────────────────
 async def store_tokens(tokens_data):
     now = datetime.now(timezone.utc)
 
     for token in tokens_data:
-        token_symbol = token.get("token_symbol", "").lower()
+        token_symbol = token["token_symbol"]
 
         insert_stmt = insert(tokens).values(
             token_symbol=token_symbol,
@@ -154,7 +148,7 @@ async def store_tokens(tokens_data):
                 "last_seen_at": now,
                 "is_active": True,
                 "wom_score": insert_stmt.excluded.wom_score,
-                "tweet_count": insert_stmt.excluded.tweet_count,
+                "tweet_count": insert_stmt.excluded.tweet_count
             }
         )
 
@@ -162,37 +156,57 @@ async def store_tokens(tokens_data):
 
     logging.info(f"Stored/Updated {len(tokens_data)} tokens.")
 
-async def deactivate_stale_tokens(grace_period_hours=3):
-    """
-    Mark tokens as inactive if they haven't been seen in the last `grace_period_hours`.
-    """
-    threshold = datetime.now(timezone.utc) - timedelta(hours=grace_period_hours)
+# ────────────────────────────────────────────
+# Deactivation of Inactive Tokens
+# ────────────────────────────────────────────
+async def deactivate_stale_tokens(grace_hours=3):
+    threshold = datetime.now(timezone.utc) - timedelta(hours=grace_hours)
     query = tokens.update().where(
         tokens.c.last_seen_at < threshold,
         tokens.c.is_active == True
     ).values(is_active=False)
-    
-    updated = await database.execute(query)
-    logging.info(f"[Deactivation] Marked {updated} token(s) as inactive.")
 
+    count = await database.execute(query)
+    logging.info(f"Marked {count} stale tokens as inactive.")
 
+# ────────────────────────────────────────────
+# Delete Tokens Older than 48h
+# ────────────────────────────────────────────
+async def delete_old_tokens():
+    threshold = datetime.now(timezone.utc) - timedelta(hours=48)
+
+    old_tokens_query = select(tokens.c.token_symbol).where(tokens.c.created_at < threshold)
+    rows = await database.fetch_all(old_tokens_query)
+    old_symbols = [r["token_symbol"] for r in rows]
+
+    if not old_symbols:
+        return
+
+    deleted_tweets = await database.execute(
+        delete(tweets).where(tweets.c.token_symbol.in_(old_symbols))
+    )
+    deleted_tokens = await database.execute(
+        delete(tokens).where(tokens.c.token_symbol.in_(old_symbols))
+    )
+
+    logging.info(f"Deleted {deleted_tokens} old tokens and {deleted_tweets} tweets.")
+
+# ────────────────────────────────────────────
+# Public Entrypoint
+# ────────────────────────────────────────────
 async def fetch_tokens():
-    """
-    Pipeline: Fetch filtered tokens from Apify, store them, clean up old ones.
-    """
-    filtered_tokens = await get_filtered_pairs()
-    if filtered_tokens:
-        await store_tokens(filtered_tokens)
-    else:
-        logging.info("No tokens with recent Raydium pools to store.")
-
-    await deactivate_stale_tokens(grace_period_hours=3)
+    tokens_data = await get_filtered_pairs()
+    if tokens_data:
+        await store_tokens(tokens_data)
+    await deactivate_stale_tokens()
     await delete_old_tokens()
-    return filtered_tokens
+    return tokens_data
 
+# ────────────────────────────────────────────
+# Fetch From DB for FE Display
+# ────────────────────────────────────────────
 async def fetch_tokens_from_db():
-    query = tokens.select()
-    rows = await database.fetch_all(query)
+    rows = await database.fetch_all(tokens.select())
 
     return [
         {
@@ -209,28 +223,3 @@ async def fetch_tokens_from_db():
         }
         for row in rows
     ]
-
-async def delete_old_tokens():
-    """
-    Delete tokens older than 48 hours and their associated tweets.
-    """
-    threshold = datetime.now(timezone.utc) - timedelta(hours=48)
-
-    # Step 1: Find tokens older than 48h
-    old_tokens_query = select(tokens.c.token_symbol).where(tokens.c.created_at < threshold)
-    old_token_rows = await database.fetch_all(old_tokens_query)
-    old_symbols = [row["token_symbol"] for row in old_token_rows]
-
-    if not old_symbols:
-        logging.info("[Cleanup] No old tokens found for deletion.")
-        return
-
-    # Step 2: Delete tweets associated with those tokens
-    delete_tweets_query = delete(tweets).where(tweets.c.token_symbol.in_(old_symbols))
-    deleted_tweets = await database.execute(delete_tweets_query)
-
-    # Step 3: Delete the tokens themselves
-    delete_tokens_query = delete(tokens).where(tokens.c.token_symbol.in_(old_symbols))
-    deleted_tokens = await database.execute(delete_tokens_query)
-
-    logging.info(f"[Cleanup] Deleted {deleted_tokens} old token(s) and {deleted_tweets} associated tweet(s).")
