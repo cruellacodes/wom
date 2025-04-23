@@ -115,8 +115,9 @@ async def store_tokens(tokens_data):
     now = datetime.now(timezone.utc)
 
     for token in tokens_data:
+        token_symbol = token.get("token_symbol", "").upper()
         stmt = insert(tokens).values(
-            token_symbol=token.get("token_symbol"),
+            token_symbol=token_symbol,
             token_name=token.get("token_name"),
             address=token.get("address"),
             age_hours=token.get("age_hours"),

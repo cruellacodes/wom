@@ -31,7 +31,7 @@ async def get_tweets(token_symbol: str):
         return {
             "token": token_symbol,
             "tweets": tweets_data.get("tweets", []),
-            "wom_score": tweets_data.get("wom_score", 0)
+            "wom_score": tweets_data.get("wom_score", 1)
         }
     except Exception as e:
         logging.error(f"Error fetching tweets for {token_symbol}: {e}")
