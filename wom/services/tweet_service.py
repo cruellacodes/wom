@@ -362,7 +362,7 @@ async def run_tweet_pipeline():
     tasks = [fetch_and_analyze(token) for token in active_tokens]
     await asyncio.gather(*tasks)
 
-async def fetch_tweet_volume_buckets():
+async def fetch_tweet_volume_buckets(token_symbol: str):
     now = datetime.utcnow()
     buckets = {
         "1h": now - timedelta(hours=1),
@@ -372,19 +372,18 @@ async def fetch_tweet_volume_buckets():
         "48h": now - timedelta(hours=48),
     }
 
+    # Fetch tweets for the specific token_symbol
     query = select([
-        tweets.c.token_symbol,
         tweets.c.created_at
-    ])
+    ]).where(tweets.c.token_symbol == token_symbol.lower())
+
     rows = await database.fetch_all(query)
 
-    volume = defaultdict(lambda: {"1h": 0, "6h": 0, "12h": 0, "24h": 0, "48h": 0})
+    bucket_counts = {k: 0 for k in buckets}
     for row in rows:
-        symbol = row["token_symbol"].lower()
         created = row["created_at"]
-
-        for k, dt in buckets.items():
+        for label, dt in buckets.items():
             if created >= dt:
-                volume[symbol][k] += 1
+                bucket_counts[label] += 1
 
-    return dict(volume)
+    return bucket_counts
