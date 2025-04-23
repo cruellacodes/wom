@@ -121,7 +121,7 @@ async def store_tokens(tokens_data):
     for token in tokens_data:
         token_symbol = token.get("token_symbol", "").lower()
 
-        stmt = insert(tokens).values(
+        insert_stmt = insert(tokens).values(
             token_symbol=token_symbol,
             token_name=token.get("token_name"),
             address=token.get("address"),
@@ -135,28 +135,30 @@ async def store_tokens(tokens_data):
             created_at=now,
             last_seen_at=now,
             is_active=True,
-            wom_score=1.0,       
-            tweet_count=0 
-        ).on_conflict_do_update(
+            wom_score=1.0,
+            tweet_count=0
+        )
+
+        update_stmt = insert_stmt.on_conflict_do_update(
             index_elements=["token_symbol"],
             set_={
-                "token_name": stmt.excluded.token_name,
-                "address": stmt.excluded.address,
-                "age_hours": stmt.excluded.age_hours,
-                "volume_usd": stmt.excluded.volume_usd,
-                "maker_count": stmt.excluded.maker_count,
-                "liquidity_usd": stmt.excluded.liquidity_usd,
-                "market_cap_usd": stmt.excluded.market_cap_usd,
-                "dex_url": stmt.excluded.dex_url,
-                "pricechange1h": stmt.excluded.pricechange1h,
+                "token_name": insert_stmt.excluded.token_name,
+                "address": insert_stmt.excluded.address,
+                "age_hours": insert_stmt.excluded.age_hours,
+                "volume_usd": insert_stmt.excluded.volume_usd,
+                "maker_count": insert_stmt.excluded.maker_count,
+                "liquidity_usd": insert_stmt.excluded.liquidity_usd,
+                "market_cap_usd": insert_stmt.excluded.market_cap_usd,
+                "dex_url": insert_stmt.excluded.dex_url,
+                "pricechange1h": insert_stmt.excluded.pricechange1h,
                 "last_seen_at": now,
                 "is_active": True,
-                "wom_score": stmt.excluded.wom_score,
-                "tweet_count": stmt.excluded.tweet_count,
+                "wom_score": insert_stmt.excluded.wom_score,
+                "tweet_count": insert_stmt.excluded.tweet_count,
             }
         )
 
-        await database.execute(stmt)
+        await database.execute(update_stmt)
 
     logging.info(f"Stored/Updated {len(tokens_data)} tokens.")
 
