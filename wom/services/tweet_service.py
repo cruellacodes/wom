@@ -111,7 +111,8 @@ async def get_sentiment(tweets_by_token):
             }
             continue
 
-        scores = await asyncio.gather(*(analyze_sentiment(t["text"]) for t in tweets))
+        texts = [t["text"] if t["text"] else "" for t in tweets]
+        scores = await asyncio.gather(*(analyze_sentiment(text) for text in texts))
 
         for i, score in enumerate(scores):
             tweets[i]["wom_score"] = score
@@ -218,34 +219,29 @@ async def fetch_tweet_volume_buckets(token):
 async def fetch_and_analyze(token_symbol, store=True):
     raw = await fetch_tweets_from_rapidapi(token_symbol)
     if not raw:
-        return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
-
+        logging.info(f"No raw tweets for {token_symbol}")
+    
     processed_dict = await preprocess_tweets(raw, token_symbol)
     processed = processed_dict.get(token_symbol, [])
 
-    if not processed:
-        return {"token": token_symbol, "wom_score": 1.0, "tweet_count": 0, "tweets": []}
-
     sentiment_dict = await get_sentiment({token_symbol: processed})
-    sentiment = sentiment_dict.get(token_symbol, {})
+    sentiment = sentiment_dict.get(token_symbol, {"wom_score": 1.0, "tweet_count": 0, "tweets": []})
 
-    if store and sentiment.get("tweets"):
+    # Store new tweets if any
+    if store and sentiment["tweets"]:
         await store_tweets(token_symbol, sentiment["tweets"])
 
-        all_stored = await fetch_stored_tweets(token_symbol)
-        all_scores = [t["wom_score"] for t in all_stored if t["wom_score"] is not None]
-        final_score = round((sum(all_scores) / len(all_scores)) / 2 * 100, 2) if all_scores else 1.0
+    all_stored = await fetch_stored_tweets(token_symbol)
+    all_scores = [t["wom_score"] for t in all_stored if t["wom_score"] is not None]
+    final_score = round((sum(all_scores) / len(all_scores)) / 2 * 100, 2) if all_scores else 1.0
 
-        await update_token_table(token_symbol, final_score, len(all_scores))
-
-        sentiment["wom_score"] = final_score
-        sentiment["tweet_count"] = len(all_scores)
+    await update_token_table(token_symbol, final_score, len(all_scores))
 
     return {
         "token": token_symbol,
-        "wom_score": sentiment.get("wom_score", 1.0),
-        "tweet_count": sentiment.get("tweet_count", 0),
-        "tweets": sentiment.get("tweets", [])
+        "wom_score": final_score,
+        "tweet_count": len(all_scores),
+        "tweets": sentiment["tweets"]  
     }
 
 # === Run for all active tokens ===
