@@ -165,7 +165,7 @@ async def store_tokens(tokens_data):
 async def deactivate_low_activity_tokens():
     query = tokens.update().where(
         tokens.c.tweet_count < 20,
-        tokens.c.age_hours > 2,
+        tokens.c.age_hours > 3,
         tokens.c.is_active == True
     ).values(is_active=False)
 
