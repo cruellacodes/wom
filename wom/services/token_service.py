@@ -163,10 +163,12 @@ async def store_tokens(tokens_data):
 # Deactivation of Inactive Tokens
 # ────────────────────────────────────────────
 async def deactivate_low_activity_tokens():
+    three_hours_ago = datetime.now(timezone.utc) - timedelta(hours=3)
     query = tokens.update().where(
         and_(
             tokens.c.tweet_count < 20,
             tokens.c.age_hours > 3,
+            tokens.c.created_at < three_hours_ago,
             tokens.c.is_active == True
         )
     ).values(is_active=False)
