@@ -35,4 +35,5 @@ tweets = Table(
     Column("profile_pic", String),
     Column("created_at", DateTime(timezone=True)),
     Column("wom_score", Float),
+    Column("tweet_url", String),
 )
