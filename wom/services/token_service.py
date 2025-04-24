@@ -162,15 +162,15 @@ async def store_tokens(tokens_data):
 # ────────────────────────────────────────────
 # Deactivation of Inactive Tokens
 # ────────────────────────────────────────────
-async def deactivate_stale_tokens(grace_hours=3):
-    threshold = datetime.now(timezone.utc) - timedelta(hours=grace_hours)
+async def deactivate_low_activity_tokens():
     query = tokens.update().where(
-        tokens.c.last_seen_at < threshold,
+        tokens.c.tweet_count < 20,
+        tokens.c.age_hours > 2,
         tokens.c.is_active == True
     ).values(is_active=False)
 
     count = await database.execute(query)
-    logging.info(f"Marked {count} stale tokens as inactive.")
+    logging.info(f"Marked {count} low-activity tokens as inactive.")
 
 # ────────────────────────────────────────────
 # Delete Tokens Older than 48h
@@ -201,7 +201,7 @@ async def fetch_tokens():
     tokens_data = await get_filtered_pairs()
     if tokens_data:
         await store_tokens(tokens_data)
-    await deactivate_stale_tokens()
+    await deactivate_low_activity_tokens()
     await delete_old_tokens()
     return tokens_data
 
