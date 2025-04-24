@@ -38,7 +38,10 @@ async def fetch_tweets_from_rapidapi(token_symbol):
         "x-rapidapi-host": rapidapi_host
     }
 
-    query = f"${token_symbol.strip().replace('$', '')}"
+    clean_token = token_symbol.strip().replace("$", "")
+    query_prefix = "#" if len(clean_token) > 6 else "$"
+    query = f"{query_prefix}{clean_token}"
+
     url = f"https://{rapidapi_host}/search.php"
 
     async with httpx.AsyncClient() as client:
