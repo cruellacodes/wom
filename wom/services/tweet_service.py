@@ -30,6 +30,10 @@ async def fetch_active_tokens():
     return [row["token_symbol"] for row in rows]
 
 async def fetch_tweets_from_rapidapi(token_symbol):
+    if not token_symbol or not isinstance(token_symbol, str):
+        logging.error(f"Invalid token_symbol passed: {token_symbol}")
+        return []
+    
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
     rapidapi_host = os.getenv("RAPIDAPI_HOST")
 
