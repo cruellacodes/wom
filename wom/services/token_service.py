@@ -150,8 +150,6 @@ async def store_tokens(tokens_data):
                 "pricechange1h": insert_stmt.excluded.pricechange1h,
                 "last_seen_at": now,
                 "is_active": True,
-                "wom_score": insert_stmt.excluded.wom_score,
-                "tweet_count": insert_stmt.excluded.tweet_count
             }
         )
 
