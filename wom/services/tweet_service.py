@@ -176,9 +176,10 @@ async def fetch_tweet_volume_last_6h(token):
         created = row["created_at"]
         if isinstance(created, str):
             created = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
+
         hours_ago = int((now - created).total_seconds() // 3600)
-        if 1 <= hours_ago <= 6:
-            volume[f"Hour -{hours_ago}"] += 1
+        if 0 <= hours_ago < 6:
+            volume[f"Hour -{hours_ago + 1}"] += 1
     return volume
 
 async def fetch_tweet_volume_buckets(token):
