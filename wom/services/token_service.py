@@ -43,16 +43,15 @@ async def get_filtered_pairs():
         "toPage": 1,
     }
 
-    MIN_MAKERS = 5000
     # MIN_VOLUME = 200_000
     # MIN_MARKET_CAP = 250_000
     # MIN_LIQUIDITY = 100_000
-    MAX_AGE = 48  # hours
+    #MAX_AGE = 48  # hours
 
     filtered_tokens = []
     unique_symbols = set()
-    MIN_MAKERS = 7000
-    MAX_AGE = 48
+    MIN_MAKERS = 5000
+    #MAX_AGE = 48
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -90,7 +89,6 @@ async def get_filtered_pairs():
 
             if (
                 age is not None and
-                age <= MAX_AGE and
                 maker_count >= MIN_MAKERS and
                 token_symbol not in unique_symbols
             ):
