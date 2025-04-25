@@ -43,7 +43,7 @@ async def get_filtered_pairs():
         "toPage": 1,
     }
 
-    MIN_MAKERS = 7000
+    MIN_MAKERS = 5000
     # MIN_VOLUME = 200_000
     # MIN_MARKET_CAP = 250_000
     # MIN_LIQUIDITY = 100_000
