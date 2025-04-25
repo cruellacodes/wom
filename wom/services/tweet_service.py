@@ -30,10 +30,6 @@ async def fetch_active_tokens():
     return [row["token_symbol"] for row in rows]
 
 async def fetch_tweets_from_rapidapi(token_symbol):
-    if not token_symbol or not isinstance(token_symbol, str):
-        logging.error(f"Invalid token_symbol passed: {token_symbol}")
-        return []
-    
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
     rapidapi_host = os.getenv("RAPIDAPI_HOST")
 
@@ -41,6 +37,10 @@ async def fetch_tweets_from_rapidapi(token_symbol):
         "x-rapidapi-key": rapidapi_key,
         "x-rapidapi-host": rapidapi_host
     }
+
+    if not token_symbol:
+        logging.error("Token symbol is None or empty.")
+        return []
 
     clean_token = token_symbol.strip().replace("$", "")
     query_prefix = "#" if len(clean_token) > 6 else "$"
@@ -104,15 +104,9 @@ async def get_sentiment(tweets_by_token):
 
     for token, tweets in tweets_by_token.items():
         if not tweets:
-            sentiment_results[token] = {
-                "wom_score": 1.0,
-                "tweet_count": 0,
-                "tweets": []
-            }
             continue
 
-        texts = [t["text"] if t["text"] else "" for t in tweets]
-        scores = await asyncio.gather(*(analyze_sentiment(text) for text in texts))
+        scores = await asyncio.gather(*(analyze_sentiment(t["text"]) for t in tweets))
 
         for i, score in enumerate(scores):
             tweets[i]["wom_score"] = score
@@ -155,13 +149,11 @@ async def store_tweets(token, tweets_list):
     await database.execute_many(query=stmt, values=values)
 
 async def update_token_table(token, wom_score, count):
-    stmt = insert(tokens).values(
-        token_symbol=token.lower(),
+    stmt = tokens.update().where(
+        tokens.c.token_symbol == token.lower()
+    ).values(
         wom_score=wom_score,
         tweet_count=count
-    ).on_conflict_do_update(
-        index_elements=["token_symbol"],
-        set_={"wom_score": wom_score, "tweet_count": count}
     )
     await database.execute(stmt)
 
@@ -217,32 +209,34 @@ async def fetch_tweet_volume_buckets(token):
 # === One-token workflow ===
 
 async def fetch_and_analyze(token_symbol, store=True):
+    if not token_symbol:
+        logging.warning("Empty token symbol received. Skipping.")
+        return
+
     raw = await fetch_tweets_from_rapidapi(token_symbol)
     if not raw:
-        logging.info(f"No raw tweets for {token_symbol}")
-    
+        logging.info(f"No new tweets found for {token_symbol}. Skipping update.")
+        return
+
     processed_dict = await preprocess_tweets(raw, token_symbol)
     processed = processed_dict.get(token_symbol, [])
 
-    sentiment_dict = await get_sentiment({token_symbol: processed})
-    sentiment = sentiment_dict.get(token_symbol, {"wom_score": 1.0, "tweet_count": 0, "tweets": []})
+    if not processed:
+        logging.info(f"All tweets filtered out for {token_symbol}. Skipping update.")
+        return
 
-    # Store new tweets if any
-    if store and sentiment["tweets"]:
+    sentiment_dict = await get_sentiment({token_symbol: processed})
+    sentiment = sentiment_dict.get(token_symbol, {})
+
+    if store and sentiment.get("tweets"):
         await store_tweets(token_symbol, sentiment["tweets"])
 
-    all_stored = await fetch_stored_tweets(token_symbol)
-    all_scores = [t["wom_score"] for t in all_stored if t["wom_score"] is not None]
-    final_score = round((sum(all_scores) / len(all_scores)) / 2 * 100, 2) if all_scores else 1.0
+        all_stored = await fetch_stored_tweets(token_symbol)
+        all_scores = [t["wom_score"] for t in all_stored if t["wom_score"] is not None]
 
-    await update_token_table(token_symbol, final_score, len(all_scores))
-
-    return {
-        "token": token_symbol,
-        "wom_score": final_score,
-        "tweet_count": len(all_scores),
-        "tweets": sentiment["tweets"]  
-    }
+        if all_scores:
+            final_score = round((sum(all_scores) / len(all_scores)) / 2 * 100, 2)
+            await update_token_table(token_symbol, final_score, len(all_scores))
 
 # === Run for all active tokens ===
 
