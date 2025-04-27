@@ -84,12 +84,7 @@ async def get_filtered_pairs():
             token_symbol = await extract_and_format_symbol(item.get("tokenSymbol", ""))
             token_symbol = token_symbol.lower()
 
-            age = item.get("age")
-            maker_count = item.get("makerCount", 0)
-
             if (
-                age is not None and
-                maker_count >= MIN_MAKERS and
                 token_symbol not in unique_symbols
             ):
                 unique_symbols.add(token_symbol)
@@ -97,14 +92,14 @@ async def get_filtered_pairs():
                     "token_symbol": token_symbol,
                     "token_name": item.get("tokenName", "Unknown"),
                     "address": item.get("address", "N/A"),
-                    "age_hours": age,
+                    "age_hours": item.get("age", 0),
                     "volume_usd": item.get("volumeUsd", 0),
-                    "maker_count": maker_count,
+                    "maker_count": item.get("maker_count", 0),
                     "liquidity_usd": item.get("liquidityUsd", 0),
                     "market_cap_usd": item.get("marketCapUsd", 0),
                     "priceChange1h": item.get("priceChange1h", 0)
                 })
-        logging.info(f"Filtered {len(filtered_tokens)} tokens.")
+        logging.info(f"Filtered {len(filtered_tokens)} tokens: {filtered_tokens}")
         return filtered_tokens
 
 # ────────────────────────────────────────────
