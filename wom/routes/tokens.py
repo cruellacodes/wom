@@ -34,53 +34,52 @@ async def get_tokens(
 @tokens_router.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
     try:
-        # Step 1: Try to find token in DB
+        # Step 1: Try from local database
         query = tokens.select().where(tokens.c.address == token_address.lower())
         result = await database.fetch_one(query)
 
         if result:
-            # Found in database
             return {
-                "token_symbol": result["token_symbol"],
+                "symbol": result["token_symbol"],
                 "token_name": result["token_name"],
                 "address": result["address"],
                 "marketCap": result["market_cap_usd"],
                 "volume24h": result["volume_usd"],
                 "liquidity": result["liquidity_usd"],
+                "priceUsd": None, 
                 "priceChange1h": result["pricechange1h"],
                 "dexUrl": result["dex_url"],
                 "ageHours": result["age_hours"],
-                "wom_score": result["wom_score"]
             }
 
-        # Step 2: Not found, fetch from Dexscreener
-        dexscreener_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+        # Step 2: If not found, call Dexscreener API
+        url = f"https://api.dexscreener.com/token-pairs/v1/{chain_id}/{token_address}"
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(dexscreener_url)
+            response = await client.get(url)
             response.raise_for_status()
-            data = response.json()
+            pairs = response.json()
 
-        # Validate API data
-        pairs = data.get("pairs", [])
-        if not pairs:
-            raise HTTPException(status_code=404, detail="Token not found")
+        if not pairs or not isinstance(pairs, list):
+            raise HTTPException(status_code=404, detail="Token not found on Dexscreener.")
 
-        # Pick the first pair (most popular)
-        pair = pairs[0]
+        # Pick the pair with the highest liquidity
+        best_pair = max(pairs, key=lambda x: x.get("liquidity", {}).get("usd", 0))
 
         return {
-            
-            "symbol": pair["baseToken"]["symbol"],
-            "token_name": pair["baseToken"]["name"],
-            "address": pair["baseToken"]["address"],
-            "marketCap": pair.get("fdv", 0),
-            "volume24h": pair.get("volume", {}).get("h24", 0),
-            "liquidity": pair.get("liquidity", {}).get("usd", 0),
-            "priceChange1h": pair.get("priceChange", {}).get("h1", 0),
-            "dexUrl": f"https://dexscreener.com/{pair['chainId']}/{pair['pairAddress']}",
-            "ageHours": None 
+            "symbol": best_pair["baseToken"]["symbol"],
+            "token_name": best_pair["baseToken"]["name"],
+            "address": best_pair["baseToken"]["address"],
+            "marketCap": best_pair.get("marketCap", 0),
+            "volume24h": best_pair.get("volume", {}).get("h24", 0),
+            "liquidity": best_pair.get("liquidity", {}).get("usd", 0),
+            "priceUsd": best_pair.get("priceUsd", None),
+            "priceChange1h": best_pair.get("priceChange", {}).get("h1", 0),
+            "dexUrl": best_pair.get("url", "#"),
+            "ageHours": None  # still unknown unless we calculate manually
         }
-
+    
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=404, detail="Token not found or Dexscreener error.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching token: {str(e)}")

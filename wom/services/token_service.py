@@ -94,7 +94,7 @@ async def get_filtered_pairs():
                     "address": item.get("address", "N/A"),
                     "age_hours": item.get("age", 0),
                     "volume_usd": item.get("volumeUsd", 0),
-                    "maker_count": item.get("maker_count", 0),
+                    "maker_count": item.get("makerCount", 0),
                     "liquidity_usd": item.get("liquidityUsd", 0),
                     "market_cap_usd": item.get("marketCapUsd", 0),
                     "priceChange1h": item.get("priceChange1h", 0)
