@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TextClassificationPipeline
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import select, delete
+from sqlalchemy import select
+import math
 
 from db import database
 from models import tokens, tweets
@@ -104,14 +105,18 @@ async def get_sentiment(tweets_by_token):
 
     for token, tweets in tweets_by_token.items():
         if not tweets:
-            continue
+            continue  # No tweets for this token, skip
 
-        scores = await asyncio.gather(*(analyze_sentiment(t["text"]) for t in tweets))
+        # Analyze all tweets' text in parallel
+        texts = [t["text"] for t in tweets]
+        scores = await asyncio.gather(*(analyze_sentiment(text) for text in texts))
 
-        for i, score in enumerate(scores):
-            tweets[i]["wom_score"] = score
+        # Attach the sentiment score to each tweet
+        for tweet, score in zip(tweets, scores):
+            tweet["wom_score"] = score
 
-        avg = round((sum(scores) / len(scores)) / 2 * 100, 2) if scores else 1.0
+        # Compute average WOM score for this batch (simple, no weighting here)
+        avg = round((sum(scores) / len(scores)) / 2 * 100, 2)
 
         sentiment_results[token] = {
             "wom_score": avg,
@@ -123,30 +128,52 @@ async def get_sentiment(tweets_by_token):
 
 # === Store & Update ===
 
-async def store_tweets(token, tweets_list):
-    if not tweets_list:
+async def store_tweets(token: str, tweets_list: list[dict]) -> None:
+    """
+    Idempotently bulk-insert tweets for *token*.
+    •   Skips empty/invalid rows up-front.
+    •   Normalises the token only once.
+    •   Uses a single list-comprehension guarded by a helper
+        so we don’t do try/except work twice.
+    """
+
+    def _transform(tweet: dict):
+        """Return a row-dict or None if parsing fails / field missing."""
+        try:
+            # ISO-8601 strings coming back from preprocess_tweets()
+            dt = datetime.fromisoformat(tweet["created_at"])
+            if dt.tzinfo is None:               # tolerate naïve datetimes
+                dt = dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+        return {
+            "tweet_id":        tweet["tweet_id"],
+            "token_symbol":    token_lc,              # use cached lowercase
+            "text":            tweet["text"],
+            "user_name":       tweet["user_name"],
+            "followers_count": tweet["followers_count"],
+            "profile_pic":     tweet["profile_pic"],
+            "created_at":      dt,
+            "wom_score":       tweet["wom_score"],
+            "tweet_url":       tweet["tweet_url"],
+        }
+
+    if not tweets_list:                 # nothing to do
         return
 
-    values = []
-    for tweet in tweets_list:
-        try:
-            dt = datetime.fromisoformat(tweet["created_at"]).replace(tzinfo=timezone.utc)
-            values.append({
-                "tweet_id": tweet["tweet_id"],
-                "token_symbol": token.lower(),
-                "text": tweet["text"],
-                "user_name": tweet["user_name"],
-                "followers_count": tweet["followers_count"],
-                "profile_pic": tweet["profile_pic"],
-                "created_at": dt,
-                "wom_score": tweet["wom_score"],
-                "tweet_url": tweet["tweet_url"]
-            })
-        except Exception:
-            continue
+    token_lc = token.lower()
+
+    # build rows, silently dropping any that fail _transform()
+    rows = [_transform(t) for t in tweets_list]
+    rows = [r for r in rows if r is not None]
+
+    if not rows:
+        return  # every row failed validation
 
     stmt = insert(tweets).on_conflict_do_nothing(index_elements=["tweet_id"])
-    await database.execute_many(query=stmt, values=values)
+    await database.execute_many(stmt, rows)
+
 
 async def update_token_table(token, wom_score, count):
     stmt = tokens.update().where(
@@ -210,15 +237,21 @@ async def fetch_tweet_volume_buckets(token):
 # === One-token workflow ===
 
 async def fetch_and_analyze(token_symbol, store=True):
-    if not token_symbol:
-        logging.warning("Empty token symbol received. Skipping.")
+    # 1. Check if token exists in the DB
+    exists_query = select(tokens.c.token_symbol).where(tokens.c.token_symbol == token_symbol.lower())
+    exists = await database.fetch_one(exists_query)
+
+    if not exists:
+        logging.warning(f"Skipping analysis: Token {token_symbol} not found in tokens table.")
         return
 
+    # 2. Fetch raw tweets
     raw = await fetch_tweets_from_rapidapi(token_symbol)
     if not raw:
         logging.info(f"No new tweets found for {token_symbol}. Skipping update.")
         return
 
+    # 3. Preprocess tweets
     processed_dict = await preprocess_tweets(raw, token_symbol)
     processed = processed_dict.get(token_symbol, [])
 
@@ -226,18 +259,34 @@ async def fetch_and_analyze(token_symbol, store=True):
         logging.info(f"All tweets filtered out for {token_symbol}. Skipping update.")
         return
 
+    # 4. Sentiment analysis
     sentiment_dict = await get_sentiment({token_symbol: processed})
     sentiment = sentiment_dict.get(token_symbol, {})
 
     if store and sentiment.get("tweets"):
+        # 5. Store new tweets
         await store_tweets(token_symbol, sentiment["tweets"])
 
+        # 6. Fetch ALL stored tweets to calculate final WOM score
         all_stored = await fetch_stored_tweets(token_symbol)
         all_scores = [t["wom_score"] for t in all_stored if t["wom_score"] is not None]
 
         if all_scores:
-            final_score = round((sum(all_scores) / len(all_scores)) / 2 * 100, 2)
+            # -- Calculate average sentiment
+            average_score = sum(all_scores) / len(all_scores)
+            normalized_score = (average_score / 2) * 100  # 0-100 scaling
+
+            # -- Apply logarithmic boost
+            boost = math.log(len(all_scores) + 1) * 1.5
+            weighted_score = normalized_score + boost
+
+            # -- Cap final score at 100
+            final_score = min(round(weighted_score, 2), 100.0)
+
+            # 7. Update token table
             await update_token_table(token_symbol, final_score, len(all_scores))
+
+            logging.info(f"Updated {token_symbol}: WOM Score={final_score}, Tweets={len(all_scores)}")
 
 # === Run for all active tokens ===
 
