@@ -86,6 +86,7 @@ async def get_filtered_pairs():
 
             if (
                 token_symbol not in unique_symbols
+                and len(token_symbol) > 1
             ):
                 unique_symbols.add(token_symbol)
                 filtered_tokens.append({
