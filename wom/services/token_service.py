@@ -84,9 +84,11 @@ async def get_filtered_pairs():
             token_symbol = await extract_and_format_symbol(item.get("tokenSymbol", ""))
             token_symbol = token_symbol.lower()
 
+            symbol_without_dollar = token_symbol.lstrip("$")
             if (
-                token_symbol not in unique_symbols
-                and len(token_symbol) > 1
+                symbol_without_dollar not in unique_symbols
+                and len(symbol_without_dollar) > 1
+                and not any(char.isdigit() for char in symbol_without_dollar)
             ):
                 unique_symbols.add(token_symbol)
                 filtered_tokens.append({
