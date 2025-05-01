@@ -269,24 +269,43 @@ async def fetch_and_analyze(token_symbol, store=True):
 
         # 6. Fetch ALL stored tweets to calculate final WOM score
         all_stored = await fetch_stored_tweets(token_symbol)
-        all_scores = [t["wom_score"] for t in all_stored if t["wom_score"] is not None]
+        filtered = [t for t in all_stored if t["wom_score"] is not None and t["created_at"] is not None]
 
-        if all_scores:
-            # -- Calculate average sentiment
-            average_score = sum(all_scores) / len(all_scores)
-            normalized_score = (average_score / 2) * 100  # 0-100 scaling
+        if filtered:
+            final_score = compute_final_wom_score(filtered)
+            await update_token_table(token_symbol, final_score, len(filtered))
+            logging.info(f"Updated {token_symbol}: WOM Score={final_score}, Tweets={len(filtered)}")
 
-            # -- Apply logarithmic boost
-            boost = math.log(len(all_scores) + 1) * 1.5
-            weighted_score = normalized_score + boost
+def compute_final_wom_score(tweets):
+    """Apply time decay and lifespan normalization to tweets and calculate final WOM score."""
+    if not tweets:
+        return 0.0
 
-            # -- Cap final score at 100
-            final_score = min(round(weighted_score, 2), 100.0)
+    now = datetime.now(timezone.utc)
+    decay_constant = 12  # Decay factor in hours
+    weighted_sum = 0.0
+    earliest_tweet_time = now
 
-            # 7. Update token table
-            await update_token_table(token_symbol, final_score, len(all_scores))
+    for tweet in tweets:
+        created_at = tweet["created_at"]
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
 
-            logging.info(f"Updated {token_symbol}: WOM Score={final_score}, Tweets={len(all_scores)}")
+        age_hours = (now - created_at).total_seconds() / 3600
+        decay_weight = math.exp(-age_hours / decay_constant)
+        weighted_sum += tweet["wom_score"] * decay_weight
+
+        if created_at < earliest_tweet_time:
+            earliest_tweet_time = created_at
+
+    lifespan_hours = (now - earliest_tweet_time).total_seconds() / 3600
+    lifespan_hours = max(lifespan_hours, 1.0)
+
+    normalized_score = weighted_sum / lifespan_hours
+    scaled_score = (normalized_score / 2) * 100  # scale to 0–100
+    return min(round(scaled_score, 2), 100.0)
 
 # === Run for all active tokens ===
 

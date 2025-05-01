@@ -1,56 +1,56 @@
-# **CryptoBERT: AI-Powered Sentiment Analysis in Crypto Markets**
+# **WOM Sentiment Engine: Real-Time AI Signal for Token Hype**
 
 ## **Abstract**
-This document outlines the integration of **CryptoBERT**, a deep learning-based NLP model, into a cryptocurrency sentiment analysis system. By leveraging transformer architecture and crypto-specific training data, CryptoBERT provides real-time sentiment scores for tweets mentioning crypto tokens. This enables a structured, AI-driven approach to understanding market sentiment at both micro (tweet) and macro (token) levels.
+This document details the architecture and methodology behind our custom-built **WOM Sentiment Engine** , an AI-powered system designed to analyze Twitter sentiment around crypto tokens in real time. 
+
+By leveraging deep learning, time-sensitive weighting, and domain-specific linguistic understanding, the system computes a dynamic metric called the **WOM Score**. This score reflects both the emotional tone and the recency of conversations around each token, offering a transparent and scalable lens into community hype.
 
 ---
 
 ## **1. Introduction**
-Crypto markets move at the speed of the internet. Price action is increasingly dictated by community chatter, memes, and hype across platforms like Twitter. However, traditional sentiment analysis tools fail to interpret the fast-changing and often chaotic language of crypto culture.
+Crypto markets don’t move by logic. They move by memes, emotions, and viral narratives.
 
-**CryptoBERT** addresses this gap by providing a **domain-specific sentiment classifier**, trained on millions of crypto-native tweets. It understands abbreviations ("LFG", "HODL"), emojis, slang, and token tags (like `$DOGE` or `#Solana`), enabling precise classification of sentiment polarity in crypto discussions.
+Twitter has become the town square of Web3 where new tokens go viral, reputations are built (or burned), and communities form before charts even exist. But traditional sentiment analysis tools don’t speak meme, can’t parse crypto slang, and definitely don’t understand the difference between “$PEPE is going to zero” and “$PEPE is going to the moon.”
 
----
+That’s why we built the **WOM Sentiment Engine**: a system trained to understand the emotional heartbeat of the crypto space, one tweet at a time.
 
-## **2. AI-Powered Sentiment Modeling with CryptoBERT**
-
-### **2.1. Model Architecture**
-CryptoBERT is a **transformer-based model** fine-tuned from **BERTweet-base** (developed by VinAI). It inherits the language modeling strength of Google’s BERT, adapted specifically for **social media text**.
-
-- **Pretrained on tweets**
-- **Fine-tuned on 3.2M crypto-tagged tweets**
-- Classifies tweets into: **Bearish**, **Neutral**, or **Bullish**
+It:
+- Detects sarcasm and FUD
+- Parses slang, abbreviations, and token tags ($, #)
 
 ---
 
-### **2.2. How the Classification Works**
-CryptoBERT uses a standard softmax layer to output probabilities for each class:
+## **2. The Engine Behind the Score**
 
-\[
-P(s_i) = \frac{e^{z_i}}{\sum_{j=1}^{N} e^{z_j}}
-\]
+### **2.1. Sentiment Types and Classification**
+Each tweet is classified into one of three sentiment types:
+- **Bearish** — negative sentiment, FUD, panic, doubt.
+- **Neutral** — news, stats, non-emotional statements.
+- **Bullish** — excitement, hype, positivity, “moon talk.”
+
+### **2.2. Classification Mechanics**
+The engine analyzes tweet text and computes probabilities for each sentiment class:
+
+$$
+P(s_i) = \frac{e^{z_i}}{\sum_{j=1}^{3} e^{z_j}}
+$$
+
 
 Where:
-- \( P(s_i) \) = probability of sentiment class \( s_i \)
-- \( z_i \) = raw logit from the model
-- \( N \) = total number of classes (3)
+- \( P(s_i) \) is the probability of sentiment class \( s_i \)
+- \( z_i \) is the raw output (logit) from the classifier
 
-### **2.3. Tweet-Level Sentiment Scoring**
-To compute a numerical score from the softmax output, the system applies a **weighted sentiment scoring formula**:
+We then calculate a continuous score per tweet using:
 
 ```python
 score = 0 * P_bearish + 1 * P_neutral + 2 * P_bullish
 ```
 
-This score is normalized to the range **[0, 2]**:
-- **0** = fully Bearish
-- **1** = Neutral
-- **2** = fully Bullish
+This returns a **float in [0, 2]**, capturing sentiment with precision.
 
-#### **Example: Bullish Tweet**
-> "$PEPE just flipped $DOGE in volume. This is insane! 🚀🔥"
+#### **Example 1: Bullish Tweet**
+> "$PEPE just flipped $DOGE in volume. This is insane!"
 
-Model output:
 ```json
 [
   {"label": "Bearish", "score": 0.03},
@@ -58,13 +58,11 @@ Model output:
   {"label": "Bullish", "score": 0.85}
 ]
 ```
+Final Score: **1.82**
 
-Score = (0 × 0.03) + (1 × 0.12) + (2 × 0.85) = **1.82**
+#### **Example 2: Bearish Tweet**
+> "Looks like $SOL is heading to 8 dollars."
 
-#### **Example: Bearish Tweet**
-> "Looks like $BTC is heading for another crash. 👎"
-
-Model output:
 ```json
 [
   {"label": "Bearish", "score": 0.91},
@@ -72,52 +70,80 @@ Model output:
   {"label": "Bullish", "score": 0.02}
 ]
 ```
-
-Score = (0 × 0.91) + (1 × 0.07) + (2 × 0.02) = **0.11**
-
-This method effectively maps sentiment into a numerical continuum without discarding bearish content. High bearish probability pushes the score closer to 0.
+Final Score: **0.11**
 
 ---
 
-## **3. Integration in This Project**
+## **3. From Tweets to WOM Score**
+The **WOM Score** is a token-level metric calculated from the collective sentiment of all tweets about that token.
 
-### **3.1. Data Pipeline**
-- Tweets mentioning crypto tokens are fetched in real time.
-- Spam, bots, and non-English posts are filtered out.
-- Each tweet is processed through the CryptoBERT pipeline.
+But we don’t just average tweets. We apply **two intelligent layers**:
 
+### **3.1. Time Decay**
+Recent tweets are more valuable than old ones. We apply exponential decay to each tweet’s score:
 ```python
-pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, return_all_scores=True)
+decay_weight = math.exp(-age_in_hours / 12)
+```
+This ensures that **hype fades**, and only fresh conversations push the score higher.
 
+### **3.2. Lifespan Normalization**
+Tokens that have existed longer naturally accumulate more tweets. To prevent this from skewing results, we normalize based on the number of hours since the first tweet:
+```python
+lifespan_hours = max(1.0, (now - first_tweet_time).total_seconds() / 3600)
+```
+This makes new tokens competitive and **keeps the scoring field fair**.
+
+### **3.3. Final WOM Score Formula**
+```python
+final_score = min(round((weighted_sum / lifespan_hours) / 2 * 100, 2), 100.0)
+```
+- **0** = Fully bearish
+- **100** = Pure bullish momentum
+
+Each token is updated live with its WOM Score and tweet volume.
+
+---
+
+## **4. Data Pipeline (Backend)**
+
+### **4.1. Workflow Overview**
+- RapidAPI fetches tweet timelines based on hashtags or cashtags (e.g. `$LLM`, `#fartcoin`)
+- Tweets are filtered using:
+  - Custom `is_relevant_tweet()` NLP logic
+  - Follower thresholds (anti-bot)
+  - Deduplication
+- Sentiment scores are calculated and added to each tweet
+- Tweets are stored in PostgreSQL via SQLAlchemy
+- A batch score update runs per token
+
+### **4.2. Example Code Snippet**
+```python
 async def analyze_sentiment(text):
-    preds = pipe(text)[0]
+    preds = pipeline(text)[0]
     return round((1 * preds[1]['score']) + (2 * preds[2]['score']), 2)
 ```
 
-### **3.2. Token-Level Aggregation (WOM Score)**
-The **WOM Score** is calculated as the average score of all tweets for a token:
+---
 
-```python
-avg_score = round((sum(tweet_scores) / len(tweet_scores)) / 2 * 100, 2)
-```
+## **5. Use Cases & Visuals**
+WOM powers:
+- **Radar charts**: Top trending tokens by tweet count
+- **Podium charts**: Top 3 tokens of the day
+- **Sentiment heatmaps**: Tweet volume vs. bullishness
+- **Scatter plots**: Tweet sentiment by follower count
 
-- Score is converted to a **0–100 scale**
-- Displayed on the frontend as a progress bar
-- Enables visual sentiment comparison across tokens
+It enables:
+- **Traders** to catch alpha early
+- **Founders** to validate buzz during launches
+- **Analysts** to visualize market vibes
 
-Each tweet retains its individual `wom_score` to power micro-level scatter plots and sentiment bubbles.
+WOM Score = **the social layer of token discovery**.
 
 ---
 
-## **4. Conclusion**
-CryptoBERT enables real-time, automated understanding of market sentiment using deep learning. Its crypto-specific design ensures accurate classification of nuanced, noisy, and emotionally charged language common in DeFi and memecoin communities.
+## **6. Conclusion**
+The WOM Sentiment Engine is built for the speed and chaos of crypto culture. It doesn’t just count tweets, it interprets mood, decodes sarcasm, and detects hype as it happens.
 
-By converting social chatter into structured sentiment scores, this system brings clarity to chaos and empowers smarter decision-making in volatile markets.
+It is real-time, fair, explainable, and battle-tested.
 
----
-
-## **References**
-1. Vaswani et al. (2017), *Attention Is All You Need*, Google Research  
-2. VinAI Research, *BERTweet-base*  
-3. Hugging Face, *Transformers Documentation*  
-4. ElKulako (2021), *CryptoBERT Model Card*
+We believe sentiment is alpha. WOM Score is how we capture it.
