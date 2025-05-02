@@ -11,3 +11,4 @@ torch==2.2.2
 psycopg2-binary==2.9.9
 databases[postgresql]==0.8.0
 asyncpg>=0.27,<0.29
+numpy>=1.24.0
