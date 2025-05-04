@@ -5,6 +5,7 @@ import os
 import httpx
 from dotenv import load_dotenv
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select, func, literal_column
 from sqlalchemy import and_, delete, select, or_
 from db import database
 from models import tokens, tweets
@@ -158,26 +159,56 @@ async def store_tokens(tokens_data):
 # ────────────────────────────────────────────
 
 async def deactivate_low_activity_tokens():
-    three_hours_ago = datetime.now(timezone.utc) - timedelta(hours=3)
+    now = datetime.now(timezone.utc)
+    three_hours_ago = now - timedelta(hours=3)
+    twentyfour_hours_ago = now - timedelta(hours=24)
 
-    query = tokens.update().where(
-        and_(
-            tokens.c.is_active == True,
-            or_(
-                and_(
-                    tokens.c.tweet_count < 20,
-                    tokens.c.created_at < three_hours_ago,
-                ),
-                and_(
-                    tokens.c.age_hours > 24,
-                    tokens.c.volume_usd < 200000
+    # Subquery: tweet counts in last 24h per token
+    recent_tweet_counts = (
+        select([
+            tweets.c.token_symbol,
+            func.count().label("tweet_count_24h")
+        ])
+        .where(tweets.c.created_at >= twentyfour_hours_ago)
+        .group_by(tweets.c.token_symbol)
+        .alias("recent_tweets")
+    )
+
+    # Join tokens table with subquery
+    tokens_with_recent_tweets = tokens.outerjoin(
+        recent_tweet_counts,
+        tokens.c.token_symbol == recent_tweet_counts.c.token_symbol
+    )
+
+    # Build update query
+    query = (
+        tokens.update()
+        .where(
+            and_(
+                tokens.c.is_active == True,
+                or_(
+                    and_(
+                        tokens.c.tweet_count < 20,
+                        tokens.c.created_at < three_hours_ago,
+                    ),
+                    and_(
+                        tokens.c.age_hours > 24,
+                        tokens.c.volume_usd < 200000
+                    ),
+                    # less than 10 tweets in 24h + older than 23h
+                    and_(
+                        literal_column("tweet_count_24h").op("<")(10),
+                        tokens.c.age_hours > 23
+                    )
                 )
             )
         )
-    ).values(is_active=False)
+        .values(is_active=False)
+        .select_from(tokens_with_recent_tweets)
+    )
 
     count = await database.execute(query)
-    logging.info(f"Marked {len(count)} low-activity tokens as inactive.")
+    logging.info(f"Marked {count} low-activity tokens as inactive.")
 
 # ────────────────────────────────────────────
 # Delete Tokens Older than 5days

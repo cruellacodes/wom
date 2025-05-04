@@ -305,7 +305,7 @@ def compute_final_wom_score(tweets):
 
     normalized_score = weighted_sum / lifespan_hours
     scaled_score = (normalized_score / 2) * 100  # scale to 0–100
-    return min(round(scaled_score, 2), 100.0)
+    return min(round(scaled_score, 2), 88.0)
 
 # === Run for all active tokens ===
 
