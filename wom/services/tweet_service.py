@@ -95,7 +95,7 @@ async def analyze_sentiment(text):
         return 1.0
     try:
         preds = pipe(text)[0]
-        return round((1 * preds[1]["score"]) + (2 * preds[2]["score"]), 2)
+        return round((2 * preds[2]["score"]), 2)
     except Exception as e:
         logging.error(f"Sentiment error: {e}")
         return 1.0
@@ -305,7 +305,7 @@ def compute_final_wom_score(tweets):
 
     normalized_score = weighted_sum / lifespan_hours
     scaled_score = (normalized_score / 2) * 100  # scale to 0–100
-    return min(round(scaled_score, 2), 88.0)
+    return round(88.0 * (1 - math.exp(-scaled_score / 88)), 2)
 
 # === Run for all active tokens ===
 
