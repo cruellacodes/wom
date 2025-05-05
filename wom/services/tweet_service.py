@@ -9,6 +9,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, Text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
 import math
+import re
 
 from db import database
 from models import tokens, tweets
@@ -90,15 +91,29 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
 # === Sentiment ===
 
+def clean_text(text):
+    text = re.sub(r"http\S+", "", text)  # strip URLs
+    text = re.sub(r"[^\w\s\$#@]", "", text)  # remove emojis and junk
+    return text.strip()
+
 async def analyze_sentiment(text):
     if not text:
-        return 1.0
+        return 1.0  # fallback score for empty text
+
     try:
-        preds = pipe(text)[0]
-        return round((2 * preds[2]["score"]), 2)
+        predictions = pipe(text)[0]  # gives a list of scores for each label
+
+        # Build a dict like {'LABEL_0': 0.1, 'LABEL_1': 0.3, 'LABEL_2': 0.6}
+        scores = {pred["label"]: pred["score"] for pred in predictions}
+        positive_score = scores.get("LABEL_2", 0.0)
+
+        # Scale 0–1 to 0–2 range, rounded to 2 decimal places
+        return round(2 * positive_score, 2)
+
     except Exception as e:
         logging.error(f"Sentiment error: {e}")
         return 1.0
+
 
 async def get_sentiment(tweets_by_token):
     sentiment_results = {}
@@ -108,7 +123,7 @@ async def get_sentiment(tweets_by_token):
             continue  # No tweets for this token, skip
 
         # Analyze all tweets' text in parallel
-        texts = [t["text"] for t in tweets]
+        texts = [clean_text(t["text"]) for t in tweets]
         scores = await asyncio.gather(*(analyze_sentiment(text) for text in texts))
 
         # Attach the sentiment score to each tweet
@@ -116,7 +131,7 @@ async def get_sentiment(tweets_by_token):
             tweet["wom_score"] = score
 
         # Compute average WOM score for this batch (simple, no weighting here)
-        avg = round((sum(scores) / len(scores)) / 2 * 100, 2)
+        avg = round(sum(scores) / len(scores) * 50, 2)
 
         sentiment_results[token] = {
             "wom_score": avg,
