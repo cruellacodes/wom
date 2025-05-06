@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
-import httpx
-from sqlalchemy import select, func
+from fastapi import APIRouter, HTTPException, Query # type: ignore
+from sqlalchemy import select, func # type: ignore
 from models import tokens
 from db import database
+from wom.wom.services.token_service import fetch_token_info_by_address
 
 tokens_router = APIRouter()
 
@@ -33,53 +33,22 @@ async def get_tokens(
 
 @tokens_router.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
-    try:
-        # Step 1: Try from local database
-        query = tokens.select().where(tokens.c.address == token_address.lower())
-        result = await database.fetch_one(query)
+    token_info = await fetch_token_info_by_address(token_address.lower(), chain_id)
 
-        if result:
-            return {
-                "symbol": result["token_symbol"],
-                "token_name": result["token_name"],
-                "address": result["address"],
-                "marketCap": result["market_cap_usd"],
-                "volume24h": result["volume_usd"],
-                "liquidity": result["liquidity_usd"],
-                "priceUsd": None, 
-                "priceChange1h": result["pricechange1h"],
-                "dexUrl": result["dex_url"],
-                "ageHours": result["age_hours"],
-            }
+    if not token_info:
+        raise HTTPException(status_code=404, detail="Token not found on Dexscreener.")
 
-        # Step 2: If not found, call Dexscreener API
-        url = f"https://api.dexscreener.com/token-pairs/v1/{chain_id}/{token_address}"
+    base = token_info.get("baseToken", {})
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            pairs = response.json()
-
-        if not pairs or not isinstance(pairs, list):
-            raise HTTPException(status_code=404, detail="Token not found on Dexscreener.")
-
-        # Pick the pair with the highest liquidity
-        best_pair = max(pairs, key=lambda x: x.get("liquidity", {}).get("usd", 0))
-
-        return {
-            "symbol": best_pair["baseToken"]["symbol"],
-            "token_name": best_pair["baseToken"]["name"],
-            "address": best_pair["baseToken"]["address"],
-            "marketCap": best_pair.get("marketCap", 0),
-            "volume24h": best_pair.get("volume", {}).get("h24", 0),
-            "liquidity": best_pair.get("liquidity", {}).get("usd", 0),
-            "priceUsd": best_pair.get("priceUsd", None),
-            "priceChange1h": best_pair.get("priceChange", {}).get("h1", 0),
-            "dexUrl": best_pair.get("url", "#"),
-            "ageHours": None  # still unknown unless we calculate manually
-        }
-    
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=404, detail="Token not found or Dexscreener error.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error searching token: {str(e)}")
+    return {
+        "symbol": base.get("symbol"),
+        "token_name": base.get("name"),
+        "address": base.get("address"),
+        "marketCap": token_info.get("marketCap", 0),
+        "volume24h": token_info.get("volume", {}).get("h24", 0),
+        "liquidity": token_info.get("liquidity", {}).get("usd", 0),
+        "priceUsd": token_info.get("priceUsd", None),
+        "priceChange1h": token_info.get("priceChange", {}).get("h1", 0),
+        "dexUrl": token_info.get("url", "#"),
+        "ageHours": None,
+    }
