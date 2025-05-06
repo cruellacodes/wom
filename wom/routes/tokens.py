@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query # type: ignore
 from sqlalchemy import select, func # type: ignore
 from models import tokens
 from db import database
-from wom.wom.services.token_service import fetch_token_info_by_address
+from services.token_service import fetch_token_info_by_address
 
 tokens_router = APIRouter()
 
