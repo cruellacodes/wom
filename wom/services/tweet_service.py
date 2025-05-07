@@ -10,6 +10,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
 import math
 import re
+import traceback
+import random
 
 from db import database
 from models import tokens, tweets
@@ -26,6 +28,17 @@ model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, top_k=None)
 
 # === Tweet Fetching ===
+
+async def fetch_with_retries(token_symbol, retries=3, backoff=2):
+    for attempt in range(retries):
+        tweets = await fetch_tweets_from_rapidapi(token_symbol)
+        if tweets:
+            return tweets
+        wait = backoff * (2 ** attempt) + random.uniform(0, 1)
+        logging.info(f"Retrying {token_symbol} in {wait:.2f}s...")
+        await asyncio.sleep(wait)
+    logging.warning(f"Failed to fetch tweets for {token_symbol} after {retries} retries.")
+    return []
 
 async def fetch_active_tokens():
     rows = await database.fetch_all(tokens.select().where(tokens.c.is_active == True))
@@ -52,12 +65,25 @@ async def fetch_tweets_from_rapidapi(token_symbol):
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, params={"query": query, "search_type": "Latest"})
+            response = await client.get(
+                url,
+                headers=headers,
+                params={"query": query, "search_type": "Latest"},
+                timeout=10.0  # Add timeout to avoid hanging
+            )
             response.raise_for_status()
-            return response.json().get("timeline", [])
+            timeline = response.json().get("timeline", [])
+            if not timeline:
+                logging.info(f"No tweets found on RapidAPI for {token_symbol}")
+            return timeline
+        except httpx.HTTPStatusError as e:
+            logging.error(f"RapidAPI HTTP error for {token_symbol}: {e.response.status_code}")
+        except httpx.RequestError as e:
+            logging.warning(f"RapidAPI request error for {token_symbol}: {e}")
         except Exception as e:
-            logging.error(f"RapidAPI error for {token_symbol}: {e}")
-            return []
+            logging.error(f"RapidAPI unknown error for {token_symbol}: {e}")
+        return []
+
 
 # === Preprocess ===
 
@@ -98,20 +124,21 @@ def clean_text(text):
 
 async def analyze_sentiment(text):
     if not text:
-        return 1.0  # fallback score if empty
+        return 1.0
 
     try:
-        predictions = pipe(text)[0]  # [{label: ..., score: ...}, ...]
-        scores = {pred["label"]: pred["score"] for pred in predictions}
+        predictions = pipe(text)[0]
+        print(f"[Sentiment Debug] Text: {text} → Predictions: {predictions}")
+        
+        # use string labels 
+        scores = {pred["label"].lower(): pred["score"] for pred in predictions}
 
-        positive = scores.get("LABEL_2", 0.0)
-        neutral = scores.get("LABEL_1", 0.0)
+        positive = scores.get("bullish", 0.0)
+        neutral = scores.get("neutral", 0.0)
 
-        # WOM Score logic: prioritize positive, but neutral adds something
-        raw_score = (2.0 * positive) + (0.5 * neutral)  # Max possible: 2.5
-
-        # Normalize to a 0–88 scale (cap at 2.5 to avoid spikes)
+        raw_score = (2.0 * positive) + (0.5 * neutral)  
         normalized = min(raw_score, 2.5) / 2.5 * 88
+
         return round(normalized, 2)
 
     except Exception as e:
@@ -209,25 +236,6 @@ async def fetch_stored_tweets(token):
     query = tweets.select().where(tweets.c.token_symbol == token.lower())
     return await database.fetch_all(query)
 
-async def fetch_tweet_volume_last_6h(token):
-    now = datetime.now(timezone.utc)
-    six_hours_ago = now - timedelta(hours=6)
-    query = tweets.select().with_only_columns(tweets.c.created_at).where(
-        (tweets.c.token_symbol == token.lower()) &
-        (tweets.c.created_at >= six_hours_ago)
-    )
-    rows = await database.fetch_all(query)
-    volume = {f"Hour -{i}": 0 for i in range(6, 0, -1)}
-    for row in rows:
-        created = row["created_at"]
-        if isinstance(created, str):
-            created = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
-
-        hours_ago = int((now - created).total_seconds() // 3600)
-        if 0 <= hours_ago < 6:
-            volume[f"Hour -{hours_ago + 1}"] += 1
-    return volume
-
 async def fetch_tweet_volume_buckets(token):
     now = datetime.now(timezone.utc)
     buckets = {
@@ -256,49 +264,55 @@ async def fetch_tweet_volume_buckets(token):
 # === One-token workflow ===
 
 async def fetch_and_analyze(token_symbol, store=True):
-    # 1. Check if token exists in the DB
-    exists_query = select(tokens.c.token_symbol).where(tokens.c.token_symbol == token_symbol.lower())
-    exists = await database.fetch_one(exists_query)
+    try:
+        # 1. Check if token exists in the DB
+        exists_query = select(tokens.c.token_symbol).where(tokens.c.token_symbol == token_symbol.lower())
+        exists = await database.fetch_one(exists_query)
 
-    if not exists:
-        logging.warning(f"Skipping analysis: Token {token_symbol} not found in tokens table.")
-        return
+        if not exists:
+            logging.warning(f"Skipping analysis: Token {token_symbol} not found in tokens table.")
+            return
 
-    # 2. Fetch raw tweets
-    raw = await fetch_tweets_from_rapidapi(token_symbol)
-    if not raw:
-        logging.info(f"No new tweets found for {token_symbol}. Skipping update.")
-        return
+        # 2. Fetch raw tweets
+        raw = await fetch_with_retries(token_symbol)
+        if not raw:
+            logging.info(f"No new tweets found for {token_symbol}. Skipping update.")
+            return
 
-    # 3. Preprocess tweets
-    processed_dict = await preprocess_tweets(raw, token_symbol)
-    processed = processed_dict.get(token_symbol, [])
+        # 3. Preprocess tweets
+        processed_dict = await preprocess_tweets(raw, token_symbol)
+        processed = processed_dict.get(token_symbol, [])
 
-    if not processed:
-        logging.info(f"All tweets filtered out for {token_symbol}. Skipping update.")
-        return
+        if not processed:
+            logging.info(f"All tweets filtered out for {token_symbol}. Skipping update.")
+            return
 
-    # 4. Sentiment analysis
-    sentiment_dict = await get_sentiment({token_symbol: processed})
-    sentiment = sentiment_dict.get(token_symbol, {})
+        # 4. Sentiment analysis
+        sentiment_dict = await get_sentiment({token_symbol: processed})
+        sentiment = sentiment_dict.get(token_symbol, {})
 
-    if store and sentiment.get("tweets"):
-        # 5. Store new tweets
-        await store_tweets(token_symbol, sentiment["tweets"])
+        if store and sentiment.get("tweets"):
+            # 5. Store new tweets
+            await store_tweets(token_symbol, sentiment["tweets"])
 
-        # 6. Fetch ALL stored tweets to calculate final WOM score
-        all_stored = await fetch_stored_tweets(token_symbol)
-        filtered = [t for t in all_stored if t["wom_score"] is not None and t["created_at"] is not None]
+            # 6. Fetch ALL stored tweets to calculate final WOM score
+            all_stored = await fetch_stored_tweets(token_symbol)
+            filtered = [t for t in all_stored if t["wom_score"] is not None and t["created_at"] is not None]
 
-        if filtered:
-            final_score = compute_final_wom_score(filtered)
-            await update_token_table(token_symbol, final_score, len(filtered))
-            logging.info(f"Updated {token_symbol}: WOM Score={final_score}, Tweets={len(filtered)}")
+            if filtered:
+                final_score = compute_final_wom_score(filtered)
+                await update_token_table(token_symbol, final_score, len(filtered))
+                logging.info(f"Updated {token_symbol}: WOM Score={final_score}, Tweets={len(filtered)}")
+
+    except Exception as e:
+        logging.error(f"Exception in fetch_and_analyze({token_symbol}): {e}")
+        traceback.print_exc()
+        raise e  
 
 def compute_final_wom_score(tweets):
     """Compute final WOM score using time decay and scaling."""
     if not tweets:
-        return 0.0
+        return 1.0
 
     now = datetime.now(timezone.utc)
     decay_constant = 12  # Decay in hours
@@ -312,7 +326,7 @@ def compute_final_wom_score(tweets):
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
 
-        wom_score = tweet.get("wom_score", 0)
+        wom_score = tweet["wom_score"] or 0
         age_hours = (now - created_at).total_seconds() / 3600
         weight = math.exp(-age_hours / decay_constant)
 
@@ -323,7 +337,7 @@ def compute_final_wom_score(tweets):
         return 0.0
 
     average_score = weighted_sum / total_weight  
-    final_score = round((average_score / 2) * 88, 2)  
+    final_score = round(average_score, 2)
 
     return final_score
 
@@ -331,4 +345,11 @@ def compute_final_wom_score(tweets):
 
 async def run_tweet_pipeline():
     active_tokens = await fetch_active_tokens()
-    await asyncio.gather(*(fetch_and_analyze(token) for token in active_tokens))
+    results = await asyncio.gather(
+        *(fetch_and_analyze(token) for token in active_tokens),
+        return_exceptions=True
+    )
+
+    for token, result in zip(active_tokens, results):
+        if isinstance(result, Exception):
+            logging.error(f"[tweet_pipeline error] Token: {token} → {repr(result)}")

@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Query, HTTPException
-from services.tweet_service import fetch_stored_tweets, fetch_tweet_volume_last_6h, fetch_and_analyze, fetch_tweet_volume_buckets
+from fastapi import APIRouter, Query, HTTPException # type: ignore
+from services.tweet_service import fetch_stored_tweets, fetch_and_analyze, fetch_tweet_volume_buckets
 import logging
 
 tweets_router = APIRouter()
@@ -15,15 +15,6 @@ async def get_stored_tweets_endpoint(token_symbol: str = Query(...)):
         logging.error(f"Error fetching stored tweets for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-
-@tweets_router.get("/tweet-volume/")
-async def get_tweet_volume_endpoint(token_symbol: str = Query(...)):
-    try:
-        tweet_volume = await fetch_tweet_volume_last_6h(token_symbol)
-        return {"token_symbol": token_symbol, "tweet_volume": tweet_volume}
-    except Exception as e:
-        logging.error(f"Error fetching tweet volume for {token_symbol}: {e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @tweets_router.get("/tweets/{token_symbol}")
 async def get_tweets(token_symbol: str):
