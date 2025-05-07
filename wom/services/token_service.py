@@ -25,11 +25,13 @@ if not api_token:
 async def extract_and_format_symbol(raw: str) -> str:
     try:
         parts = raw.split()
+        # Pick correct token part
         symbol = parts[2] if len(parts) > 1 and parts[1] in ["DLMM", "CLMM", "CPMM"] else parts[1]
-        return f"${symbol.strip()}"
+        symbol = symbol.strip().lstrip("$")  # Remove any existing '$' prefix
+        return f"${symbol.lower()}"  # Add one clean '$' and normalize
     except (IndexError, AttributeError) as e:
         logging.error(f"Failed to parse token symbol: {raw} – {e}")
-        return "$Unknown"
+        return "$unknown"
 
 # ────────────────────────────────────────────
 # Fetch & Filter Tokens
@@ -44,24 +46,18 @@ async def get_filtered_pairs():
         "toPage": 1,
     }
 
-    # MIN_VOLUME = 200_000
-    # MIN_MARKET_CAP = 250_000
-    # MIN_LIQUIDITY = 100_000
-    #MAX_AGE = 48  # hours
-
     filtered_tokens = []
-    unique_symbols = set()
-    #MIN_MAKERS = 5000
-    #MAX_AGE = 48
+    seen_symbols = set()
 
     async with httpx.AsyncClient() as client:
+        # Start Apify run
         response = await client.post(
             f"https://api.apify.com/v2/acts/crypto-scraper~dexscreener-tokens-scraper/runs?token={api_token}",
             json=run_input
         )
         run_id = response.json()["data"]["id"]
 
-        # Wait for Apify to finish
+        # Wait for Apify to complete
         while True:
             status_resp = await client.get(
                 f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
@@ -73,37 +69,43 @@ async def get_filtered_pairs():
                 raise RuntimeError(f"Apify run failed with status: {status}")
             await asyncio.sleep(5)
 
+        # Get result items
         dataset_id = status_resp.json()["data"]["defaultDatasetId"]
         data_resp = await client.get(
             f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
         )
         items = data_resp.json()
 
-        logging.info("Filtering fetched token data...")
+        logging.info(f"📦 Apify returned {len(items)} items. Filtering...")
 
         for item in items:
-            token_symbol = await extract_and_format_symbol(item.get("tokenSymbol", ""))
-            token_symbol = token_symbol.lower()
+            raw_symbol = item.get("tokenSymbol", "")
+            parsed = await extract_and_format_symbol(raw_symbol)  # e.g. "$LLJEFFY"
+            symbol_with_dollar = parsed.strip().lower()
+            symbol_clean = symbol_with_dollar.lstrip("$")
 
-            symbol_without_dollar = token_symbol.lstrip("$")
-            if (
-                symbol_without_dollar not in unique_symbols
-                and len(symbol_without_dollar) > 1
-                and not any(char.isdigit() for char in symbol_without_dollar)
-            ):
-                unique_symbols.add(token_symbol)
-                filtered_tokens.append({
-                    "token_symbol": token_symbol,
-                    "token_name": item.get("tokenName", "Unknown"),
-                    "address": item.get("address", "N/A"),
-                    "age_hours": item.get("age", 0),
-                    "volume_usd": item.get("volumeUsd", 0),
-                    "maker_count": item.get("makerCount", 0),
-                    "liquidity_usd": item.get("liquidityUsd", 0),
-                    "market_cap_usd": item.get("marketCapUsd", 0),
-                    "priceChange1h": item.get("priceChange1h", 0)
-                })
-        logging.info(f"Filtered {len(filtered_tokens)} tokens: {filtered_tokens}")
+            # Validate symbol (only stripped part)
+            if len(symbol_clean) <= 1 or any(char.isdigit() for char in symbol_clean):
+                logging.info(f"Skipping invalid symbol: {symbol_with_dollar}")
+                continue
+
+            if symbol_with_dollar in seen_symbols:
+                continue
+            seen_symbols.add(symbol_with_dollar)
+
+            filtered_tokens.append({
+                "token_symbol": symbol_with_dollar,  
+                "token_name": item.get("tokenName", "Unknown"),
+                "address": item.get("address", "N/A"),
+                "age_hours": item.get("age", 0),
+                "volume_usd": item.get("volumeUsd", 0),
+                "maker_count": item.get("makerCount", 0),
+                "liquidity_usd": item.get("liquidityUsd", 0),
+                "market_cap_usd": item.get("marketCapUsd", 0),
+                "priceChange1h": item.get("priceChange1h", 0)
+            })
+
+        logging.info(f"Filtered {len(filtered_tokens)} tokens: {[t['token_symbol'] for t in filtered_tokens]}")
         return filtered_tokens
 
 # ────────────────────────────────────────────
@@ -163,8 +165,6 @@ async def store_tokens(tokens_data):
 
 async def deactivate_low_activity_tokens():
     now = datetime.now(timezone.utc)
-    three_hours_ago = now - timedelta(hours=3)
-    twenty_three_hours_ago = now - timedelta(hours=23)
     twenty_four_hours_ago = now - timedelta(hours=24)
 
     # Step 1: Count recent tweets per token (last 24h)
