@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
 import math
 import re
+import random
 
 from db import database
 from models import tokens, tweets
@@ -26,6 +27,17 @@ model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, top_k=None)
 
 # === Tweet Fetching ===
+
+async def fetch_with_retries(token_symbol, retries=3, backoff=2):
+    for attempt in range(retries):
+        tweets = await fetch_tweets_from_rapidapi(token_symbol)
+        if tweets:
+            return tweets
+        wait = backoff * (2 ** attempt) + random.uniform(0, 1)
+        logging.info(f"Retrying {token_symbol} in {wait:.2f}s...")
+        await asyncio.sleep(wait)
+    logging.warning(f"Failed to fetch tweets for {token_symbol} after {retries} retries.")
+    return []
 
 async def fetch_active_tokens():
     rows = await database.fetch_all(tokens.select().where(tokens.c.is_active == True))
@@ -52,12 +64,25 @@ async def fetch_tweets_from_rapidapi(token_symbol):
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, params={"query": query, "search_type": "Latest"})
+            response = await client.get(
+                url,
+                headers=headers,
+                params={"query": query, "search_type": "Latest"},
+                timeout=10.0  # Add timeout to avoid hanging
+            )
             response.raise_for_status()
-            return response.json().get("timeline", [])
+            timeline = response.json().get("timeline", [])
+            if not timeline:
+                logging.info(f"No tweets found on RapidAPI for {token_symbol}")
+            return timeline
+        except httpx.HTTPStatusError as e:
+            logging.error(f"RapidAPI HTTP error for {token_symbol}: {e.response.status_code}")
+        except httpx.RequestError as e:
+            logging.warning(f"RapidAPI request error for {token_symbol}: {e}")
         except Exception as e:
-            logging.error(f"RapidAPI error for {token_symbol}: {e}")
-            return []
+            logging.error(f"RapidAPI unknown error for {token_symbol}: {e}")
+        return []
+
 
 # === Preprocess ===
 
@@ -209,25 +234,6 @@ async def fetch_stored_tweets(token):
     query = tweets.select().where(tweets.c.token_symbol == token.lower())
     return await database.fetch_all(query)
 
-async def fetch_tweet_volume_last_6h(token):
-    now = datetime.now(timezone.utc)
-    six_hours_ago = now - timedelta(hours=6)
-    query = tweets.select().with_only_columns(tweets.c.created_at).where(
-        (tweets.c.token_symbol == token.lower()) &
-        (tweets.c.created_at >= six_hours_ago)
-    )
-    rows = await database.fetch_all(query)
-    volume = {f"Hour -{i}": 0 for i in range(6, 0, -1)}
-    for row in rows:
-        created = row["created_at"]
-        if isinstance(created, str):
-            created = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
-
-        hours_ago = int((now - created).total_seconds() // 3600)
-        if 0 <= hours_ago < 6:
-            volume[f"Hour -{hours_ago + 1}"] += 1
-    return volume
-
 async def fetch_tweet_volume_buckets(token):
     now = datetime.now(timezone.utc)
     buckets = {
@@ -265,7 +271,7 @@ async def fetch_and_analyze(token_symbol, store=True):
         return
 
     # 2. Fetch raw tweets
-    raw = await fetch_tweets_from_rapidapi(token_symbol)
+    raw = await fetch_with_retries(token_symbol)
     if not raw:
         logging.info(f"No new tweets found for {token_symbol}. Skipping update.")
         return
@@ -331,4 +337,11 @@ def compute_final_wom_score(tweets):
 
 async def run_tweet_pipeline():
     active_tokens = await fetch_active_tokens()
-    await asyncio.gather(*(fetch_and_analyze(token) for token in active_tokens))
+    results = await asyncio.gather(
+        *(fetch_and_analyze(token) for token in active_tokens),
+        return_exceptions=True
+    )
+
+    for token, result in zip(active_tokens, results):
+        if isinstance(result, Exception):
+            logging.error(f"[tweet_pipeline error] Token: {token} → {repr(result)}")
