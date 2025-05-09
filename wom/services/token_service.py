@@ -295,8 +295,8 @@ async def fetch_tokens_from_db():
 # ────────────────────────────────────────────
 # Get token info from DEX
 # ────────────────────────────────────────────
-async def fetch_token_info_by_address(token_address: str, chain_id: str = "solana") -> dict | None:
-    url = f"https://api.dexscreener.com/token-pairs/v1/{chain_id}/{token_address}"
+async def fetch_token_info_by_pair_address(pairId: str, chainId: str = "solana") -> dict | None:
+    url = f"https://api.dexscreener.com/latest/dex/pairs/{chainId}/{pairId}"
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url)
@@ -304,7 +304,7 @@ async def fetch_token_info_by_address(token_address: str, chain_id: str = "solan
             data = response.json()
             return data[0] if isinstance(data, list) and data else None
         except Exception as e:
-            logging.error(f"Failed to fetch token info for {token_address}: {e}")
+            logging.error(f"Failed to fetch token info for {pairId}: {e}")
             return None
 
 async def update_missing_tokens_info(fetched_token_symbols):
@@ -316,7 +316,7 @@ async def update_missing_tokens_info(fetched_token_symbols):
     missing_tokens = [t for t in db_tokens if t["token_symbol"] not in fetched_token_symbols]
 
     for token in missing_tokens:
-        token_info = await fetch_token_info_by_address(token["address"])
+        token_info = await fetch_token_info_by_pair_address(token["address"])
         if not token_info:
             continue
 
