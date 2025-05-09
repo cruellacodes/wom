@@ -5,7 +5,7 @@ import os
 import httpx
 from dotenv import load_dotenv
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import select, func, literal_column
+from sqlalchemy import select, func
 from sqlalchemy import and_, delete, select, or_
 from db import database
 from models import tokens, tweets
@@ -76,7 +76,7 @@ async def get_filtered_pairs():
         )
         items = data_resp.json()
 
-        logging.info(f"📦 Apify returned {len(items)} items. Filtering...")
+        logging.info(f"Apify returned {len(items)} items. Filtering...")
 
         for item in items:
             raw_symbol = item.get("tokenSymbol", "")

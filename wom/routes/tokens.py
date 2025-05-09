@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query # type: ignore
 from sqlalchemy import select, func # type: ignore
 from models import tokens
 from db import database
-from services.token_service import fetch_token_info_by_address
+from services.token_service import fetch_token_info_by_pair_address
 
 tokens_router = APIRouter()
 
@@ -33,7 +33,7 @@ async def get_tokens(
 
 @tokens_router.get("/search-token/{chain_id}/{token_address}")
 async def search_token(chain_id: str, token_address: str):
-    token_info = await fetch_token_info_by_address(token_address.lower(), chain_id)
+    token_info = await fetch_token_info_by_pair_address(token_address.lower(), chain_id)
 
     if not token_info:
         raise HTTPException(status_code=404, detail="Token not found on Dexscreener.")
