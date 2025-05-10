@@ -295,8 +295,17 @@ async def fetch_tokens_from_db():
 # ────────────────────────────────────────────
 # Get token info from DEX
 # ────────────────────────────────────────────
+
 async def fetch_token_info_by_pair_address(pairId: str, chainId: str = "solana") -> dict | None:
     url = f"https://api.dexscreener.com/latest/dex/pairs/{chainId}/{pairId}"
+
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+                    (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url)

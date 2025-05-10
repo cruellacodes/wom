@@ -1,13 +1,14 @@
 import asyncio
+from asyncio.log import logger
 import os
-import httpx
+import httpx # type: ignore
 import logging
-import pytz
-from dotenv import load_dotenv
+import pytz # type: ignore
+from dotenv import load_dotenv # type: ignore
 from datetime import datetime, timedelta, timezone
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TextClassificationPipeline
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert # type: ignore
+from sqlalchemy import select # type: ignore
 import math
 import re
 import traceback
@@ -93,6 +94,11 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
         if tweet.get("type") != "tweet":
             continue
 
+        text = tweet.get("text")
+        if text is None:
+            logger.warning(f"[{token_symbol}] Skipping tweet {tweet.get('tweet_id')} – text is None")
+            continue  # skip processing this tweet
+
         user = tweet.get("user_info", {})
         try:
             dt = datetime.strptime(tweet.get("created_at", ""), "%a %b %d %H:%M:%S %z %Y")
@@ -102,7 +108,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
         data = {
             "tweet_id": tweet.get("tweet_id"),
-            "text": tweet.get("text", "").strip(),
+            "text": text.strip(),
             "user_name": user.get("screen_name", ""),
             "followers_count": user.get("followers_count", 0),
             "profile_pic": user.get("avatar", ""),
@@ -112,6 +118,10 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
         if is_relevant_tweet(data["text"]) and data["followers_count"] >= min_followers:
             processed.append(data)
+
+    if not processed:
+        logger.warning(f"[{token_symbol}] No valid tweets after processing.")
+        return {}
 
     return {token_symbol: processed}
 
