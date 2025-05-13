@@ -43,17 +43,17 @@ async def extract_and_format_symbol(raw: str) -> str:
 def is_valid_token_symbol(symbol: str) -> bool:
     symbol_clean = symbol.lstrip("$").strip()
 
-    # Must be 2–15 chars
-    if not (2 <= len(symbol_clean) <= 15):
+    # Must be at least 3 and at most 15 characters
+    if not (3 <= len(symbol_clean) <= 15):
         return False
 
-    # Only ASCII letters or underscores
-    if not re.fullmatch(r"[A-Za-z_]+", symbol_clean):
+    # Reject if it contains non-letters (no digits, symbols, emojis)
+    if not symbol_clean.isalpha():
         return False
 
-    # Reject symbols like emojis or non-letter symbols
+    # Extra check for unicode symbols like emojis
     for char in symbol_clean:
-        if unicodedata.category(char).startswith("So"):  # Symbol, Other
+        if unicodedata.category(char).startswith("So"):
             return False
 
     return True
