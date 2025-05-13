@@ -217,7 +217,7 @@ async def deactivate_low_activity_tokens():
         )
         await database.execute(update_query)
 
-    logging.info(f"🧹 Deactivated {len(tokens_to_deactivate)} low-activity tokens: {tokens_to_deactivate}")
+    logging.info(f"Deactivated {len(tokens_to_deactivate)} low-activity tokens: {tokens_to_deactivate}")
 
 # ────────────────────────────────────────────
 # Delete Tokens Older than 5days
@@ -299,22 +299,22 @@ async def fetch_tokens_from_db():
 async def fetch_token_info_by_pair_address(pairId: str, chainId: str = "solana") -> dict | None:
     url = f"https://api.dexscreener.com/latest/dex/pairs/{chainId}/{pairId}"
 
-
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                    (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                       (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json"
     }
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
             return data[0] if isinstance(data, list) and data else None
         except Exception as e:
             logging.error(f"Failed to fetch token info for {pairId}: {e}")
             return None
+
 
 async def update_missing_tokens_info(fetched_token_symbols):
     logging.info("Checking for tokens needing info refresh...")
