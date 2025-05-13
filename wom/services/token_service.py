@@ -336,19 +336,29 @@ async def fetch_token_info_by_pair_address(pair_id: str, chain_id: str = "solana
             return None
 
 async def update_missing_tokens_info(fetched_token_symbols):
-    logging.info("Checking for tokens needing info refresh...")
-
     db_tokens_query = select(tokens.c.token_symbol, tokens.c.address).where(tokens.c.is_active == True)
     db_tokens = await database.fetch_all(db_tokens_query)
 
+    # Find tokens in DB not recently fetched
     missing_tokens = [t for t in db_tokens if t["token_symbol"] not in fetched_token_symbols]
 
+    logging.info(f"{len(missing_tokens)} tokens missing info: {[t['token_symbol'] for t in missing_tokens]}")
+
     for token in missing_tokens:
-        token_info = await fetch_token_info_by_pair_address(token["address"])
+        address = token["address"]
+        symbol = token["token_symbol"]
+
+        logging.info(f"Fetching info for token {symbol} ({address})...")
+
+        token_info = await fetch_token_info_by_pair_address(address)
+
         if not token_info:
+            logging.warning(f"Failed to fetch info for {symbol} ({address})")
             continue
 
-        await update_token_in_db(token["address"], token_info)
+        await update_token_in_db(address, token_info)
+        logging.info(f"Successfully updated {symbol} ({address})")
+
 
 async def update_token_in_db(address: str, token_info: dict):
     token_symbol=f'${token_info["baseToken"]["symbol"]}',
@@ -363,4 +373,3 @@ async def update_token_in_db(address: str, token_info: dict):
         last_seen_at=datetime.now(timezone.utc),
     )
     await database.execute(update_query)
-    logging.info(f"Updated token {token_symbol}")
