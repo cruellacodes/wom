@@ -295,12 +295,11 @@ async def fetch_tokens_from_db():
 # ────────────────────────────────────────────
 # Get token info from DEX
 # ────────────────────────────────────────────
-async def fetch_token_info_by_pair_address(pairId: str, chainId: str = "solana") -> dict | None:
-    url = f"https://api.dexscreener.com/latest/dex/pairs/{chainId}/{pairId}"
+async def fetch_token_info_by_pair_address(pair_id: str, chain_id: str = "solana") -> dict | None:
+    url = f"https://api.dexscreener.com/latest/dex/pairs/{chain_id}/{pair_id}"
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                       (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0",
         "Accept": "application/json"
     }
 
@@ -309,11 +308,10 @@ async def fetch_token_info_by_pair_address(pairId: str, chainId: str = "solana")
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
-            return data[0] if isinstance(data, list) and data else None
+            return data.get("pair") 
         except Exception as e:
-            logging.error(f"Failed to fetch token info for {pairId}: {e}")
+            logging.error(f"Failed to fetch token info for {pair_id}: {e}")
             return None
-
 
 async def update_missing_tokens_info(fetched_token_symbols):
     logging.info("Checking for tokens needing info refresh...")
@@ -331,15 +329,16 @@ async def update_missing_tokens_info(fetched_token_symbols):
         await update_token_in_db(token["address"], token_info)
 
 async def update_token_in_db(address: str, token_info: dict):
-    volume_usd = token_info.get("volume", {}).get("h24", 0)
-    liquidity_usd = token_info.get("liquidity", {}).get("usd", 0)
-    price_change_1h = token_info.get("priceChange", {}).get("h1", 0)
-
+    token_symbol=f'${token_info["baseToken"]["symbol"]}',
     update_query = tokens.update().where(tokens.c.address == address).values(
-        volume_usd=volume_usd,
-        liquidity_usd=liquidity_usd,
-        pricechange1h=price_change_1h,
+        token_symbol=token_symbol,
+        token_name=token_info["baseToken"]["name"],
+        dex_url=token_info["url"],
+        volume_usd=token_info.get("volume", {}).get("h24", 0),
+        liquidity_usd=token_info.get("liquidity", {}).get("usd", 0),
+        market_cap_usd=token_info.get("marketCap", 0),
+        pricechange1h=token_info.get("priceChange", {}).get("h1", 0),
         last_seen_at=datetime.now(timezone.utc),
     )
     await database.execute(update_query)
-    logging.info(f"Updated token {address}")
+    logging.info(f"Updated token {token_symbol}")
