@@ -34,4 +34,3 @@ EXPOSE 10000
 
 # Run the FastAPI app with uvicorn in production mode
 CMD ["uvicorn", "wom.main:app", "--host", "0.0.0.0", "--port", "10000"]
-
