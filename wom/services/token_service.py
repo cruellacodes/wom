@@ -40,7 +40,7 @@ async def get_filtered_pairs():
     run_input = {
         "chainName": "solana",
         "filterArgs": [
-            "?rankBy=trendingScoreH6&order=desc&chainIds=solana&dexIds=raydium,pumpswap,pumpfun&minLiq=50000&minMarketCap=200000&maxAge=48&min24HVol=150000"
+            "?rankBy=trendingScoreH6&order=desc&chainIds=solana&dexIds=meteora,raydium,pumpswap,pumpfun&minLiq=50000&minMarketCap=200000&maxAge=48&min24HVol=150000"
         ],
         "fromPage": 1,
         "toPage": 1,
