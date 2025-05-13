@@ -295,7 +295,6 @@ async def fetch_tokens_from_db():
 # ────────────────────────────────────────────
 # Get token info from DEX
 # ────────────────────────────────────────────
-
 async def fetch_token_info_by_pair_address(pairId: str, chainId: str = "solana") -> dict | None:
     url = f"https://api.dexscreener.com/latest/dex/pairs/{chainId}/{pairId}"
 
