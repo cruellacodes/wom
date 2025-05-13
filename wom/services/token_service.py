@@ -9,6 +9,8 @@ from sqlalchemy import select, func
 from sqlalchemy import and_, delete, select, or_
 from db import database
 from models import tokens, tweets
+import re
+import unicodedata
 
 # Logging setup
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -36,6 +38,27 @@ async def extract_and_format_symbol(raw: str) -> str:
 # ────────────────────────────────────────────
 # Fetch & Filter Tokens
 # ────────────────────────────────────────────
+
+# -- Helper to validate token symbols --
+def is_valid_token_symbol(symbol: str) -> bool:
+    symbol_clean = symbol.lstrip("$").strip()
+
+    # Must be 2–15 chars
+    if not (2 <= len(symbol_clean) <= 15):
+        return False
+
+    # Only ASCII letters or underscores
+    if not re.fullmatch(r"[A-Za-z_]+", symbol_clean):
+        return False
+
+    # Reject symbols like emojis or non-letter symbols
+    for char in symbol_clean:
+        if unicodedata.category(char).startswith("So"):  # Symbol, Other
+            return False
+
+    return True
+
+# -- Main function to get filtered tokens --
 async def get_filtered_pairs():
     run_input = {
         "chainName": "solana",
@@ -80,12 +103,11 @@ async def get_filtered_pairs():
 
         for item in items:
             raw_symbol = item.get("tokenSymbol", "")
-            parsed = await extract_and_format_symbol(raw_symbol)  # e.g. "$LLJEFFY"
+            parsed = await extract_and_format_symbol(raw_symbol)
             symbol_with_dollar = parsed.strip().lower()
-            symbol_clean = symbol_with_dollar.lstrip("$")
 
-            # Validate symbol (only stripped part)
-            if len(symbol_clean) <= 1 or any(char.isdigit() for char in symbol_clean):
+            # Validate the symbol
+            if not is_valid_token_symbol(symbol_with_dollar):
                 logging.info(f"Skipping invalid symbol: {symbol_with_dollar}")
                 continue
 
@@ -94,7 +116,7 @@ async def get_filtered_pairs():
             seen_symbols.add(symbol_with_dollar)
 
             filtered_tokens.append({
-                "token_symbol": symbol_with_dollar,  
+                "token_symbol": symbol_with_dollar,
                 "token_name": item.get("tokenName", "Unknown"),
                 "address": item.get("address", "N/A"),
                 "age_hours": item.get("age", 0),
