@@ -24,27 +24,32 @@ if not api_token:
 # ────────────────────────────────────────────
 # Token Extraction
 # ────────────────────────────────────────────
+
 async def extract_and_format_symbol(raw: str) -> tuple[str, bool]:
     try:
         parts = raw.split()
-        if len(parts) < 2:
-            raise ValueError("Not enough parts to parse")
+        ignore_words = {"DLMM", "CLMM", "CPMM", "SOL", "/"}
+        believe = any(part.upper() == "DYN" for part in parts)
 
-        believe = False
-        # DLMM/CLMM/CPMM use third part
-        symbol = parts[2] if parts[1] in ["DLMM", "CLMM", "CPMM"] and len(parts) > 2 else parts[1]
-        symbol = symbol.strip().lstrip("$")
-        
-        # Detect DYN = believe coin
-        if "DYN" in parts:
-            believe = True
+        # Skip tokens like "#4" or anything that starts with "#" or is purely numeric
+        candidates = [
+            part for part in parts
+            if part.upper() not in ignore_words
+            and not part.startswith("#")
+            and not part.isdigit()
+            and part.isalpha()  # Avoid 10, etc
+        ]
 
+        if not candidates:
+            raise ValueError("No token symbol candidates found")
+
+        # Use the first valid candidate as symbol
+        symbol = candidates[0].strip().lstrip("$")
         return f"${symbol.lower()}", believe
 
-    except (IndexError, AttributeError, ValueError) as e:
+    except Exception as e:
         logging.error(f"Failed to parse token symbol: {raw} – {e}")
         return "$unknown", False
-
 
 # ────────────────────────────────────────────
 # Fetch & Filter Tokens
