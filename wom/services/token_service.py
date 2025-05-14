@@ -26,26 +26,30 @@ if not api_token:
 # ────────────────────────────────────────────
 async def extract_and_format_symbol(raw: str) -> tuple[str, bool]:
     try:
-        ignore_labels = {"DLMM", "CLMM", "CPMM", "SOL", "USDC", "TRUMP", "/", "", "#"}
-        lines = raw.strip().split("\n")
+        lines = [line.strip() for line in raw.strip().split("\n") if line.strip()]
+        is_believe = any(line.upper() == "DYN" for line in lines)
 
-        cleaned = [
-            line.strip()
+        ignore_words = {"DLMM", "CLMM", "CPMM", "SOL", "USDC", "/", "", "TRUMP", "DYN"}
+
+        # Remove lines that are:
+        # - known labels (DLMM, SOL, etc)
+        # - numeric (e.g. "#1")
+        # - comments (start with "#")
+        # - or explicitly "DYN" (so we don’t use it as a symbol)
+        candidates = [
+            line
             for line in lines
-            if line.strip().upper() not in ignore_labels
-            and not line.strip().startswith("#")
-            and not line.strip().isdigit()
+            if line.upper() not in ignore_words
+            and not line.startswith("#")
+            and not line.isdigit()
         ]
 
-        if not cleaned:
+        if not candidates:
             raise ValueError(f"No valid token symbol candidates in: {raw}")
 
-        for token in cleaned:
-            candidate = token.lstrip("$").strip()
-            if 2 <= len(candidate) <= 15 and candidate.replace("-", "").isalnum():
-                return f"${candidate.lower()}", any(line.strip().upper() == "DYN" for line in lines)
+        symbol = candidates[0].lstrip("$").strip()
 
-        return f"${cleaned[0].lower()}", any(line.strip().upper() == "DYN" for line in lines)
+        return f"${symbol.lower()}", is_believe
 
     except Exception as e:
         logging.error(f"Failed to parse token symbol: {raw} – {e}")
