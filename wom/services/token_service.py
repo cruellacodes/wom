@@ -24,29 +24,28 @@ if not api_token:
 # ────────────────────────────────────────────
 # Token Extraction
 # ────────────────────────────────────────────
-
 async def extract_and_format_symbol(raw: str) -> tuple[str, bool]:
     try:
+        ignore_labels = {"DLMM", "CLMM", "CPMM", "SOL", "USDC", "TRUMP", "/", "", "#"}
         lines = raw.strip().split("\n")
-        believe = any("DYN" in line.upper() for line in lines)
 
-        ignore_words = {"DLMM", "CLMM", "CPMM", "SOL", "/", ""}
-        # Remove lines that are known labels or irrelevant
-        candidates = [
+        cleaned = [
             line.strip()
             for line in lines
-            if line.strip().upper() not in ignore_words
+            if line.strip().upper() not in ignore_labels
             and not line.strip().startswith("#")
             and not line.strip().isdigit()
         ]
 
-        if not candidates:
+        if not cleaned:
             raise ValueError(f"No valid token symbol candidates in: {raw}")
 
-        # First valid line is likely the token symbol
-        symbol = candidates[0].strip().lstrip("$")
+        for token in cleaned:
+            candidate = token.lstrip("$").strip()
+            if 2 <= len(candidate) <= 15 and candidate.replace("-", "").isalnum():
+                return f"${candidate.lower()}", any(line.strip().upper() == "DYN" for line in lines)
 
-        return f"${symbol.lower()}", believe
+        return f"${cleaned[0].lower()}", any(line.strip().upper() == "DYN" for line in lines)
 
     except Exception as e:
         logging.error(f"Failed to parse token symbol: {raw} – {e}")
