@@ -24,16 +24,27 @@ if not api_token:
 # ────────────────────────────────────────────
 # Token Extraction
 # ────────────────────────────────────────────
-async def extract_and_format_symbol(raw: str) -> str:
+async def extract_and_format_symbol(raw: str) -> tuple[str, bool]:
     try:
         parts = raw.split()
-        # Pick correct token part
-        symbol = parts[2] if len(parts) > 1 and parts[1] in ["DLMM", "CLMM", "CPMM"] else parts[1]
-        symbol = symbol.strip().lstrip("$")  # Remove any existing '$' prefix
-        return f"${symbol.lower()}"  # Add one clean '$' and normalize
-    except (IndexError, AttributeError) as e:
+        if len(parts) < 2:
+            raise ValueError("Not enough parts to parse")
+
+        believe = False
+        # DLMM/CLMM/CPMM use third part
+        symbol = parts[2] if parts[1] in ["DLMM", "CLMM", "CPMM"] and len(parts) > 2 else parts[1]
+        symbol = symbol.strip().lstrip("$")
+        
+        # Detect DYN = believe coin
+        if "DYN" in parts:
+            believe = True
+
+        return f"${symbol.lower()}", believe
+
+    except (IndexError, AttributeError, ValueError) as e:
         logging.error(f"Failed to parse token symbol: {raw} – {e}")
-        return "$unknown"
+        return "$unknown", False
+
 
 # ────────────────────────────────────────────
 # Fetch & Filter Tokens
@@ -103,8 +114,7 @@ async def get_filtered_pairs():
 
         for item in items:
             raw_symbol = item.get("tokenSymbol", "")
-            parsed = await extract_and_format_symbol(raw_symbol)
-            symbol_with_dollar = parsed.strip().lower()
+            symbol_with_dollar, is_believe = await extract_and_format_symbol(raw_symbol)
 
             # Validate the symbol
             if not is_valid_token_symbol(symbol_with_dollar):
@@ -124,7 +134,8 @@ async def get_filtered_pairs():
                 "maker_count": item.get("makerCount", 0),
                 "liquidity_usd": item.get("liquidityUsd", 0),
                 "market_cap_usd": item.get("marketCapUsd", 0),
-                "priceChange1h": item.get("priceChange1h", 0)
+                "priceChange1h": item.get("priceChange1h", 0),
+                "is_believe": is_believe,
             })
 
         logging.info(f"Filtered {len(filtered_tokens)} tokens: {[t['token_symbol'] for t in filtered_tokens]}")
@@ -154,7 +165,8 @@ async def store_tokens(tokens_data):
             last_seen_at=now,
             is_active=True,
             wom_score=1.0,
-            tweet_count=0
+            tweet_count=0,
+            is_believe=token.get("is_believe", False),
         )
 
         update_stmt = insert_stmt.on_conflict_do_update(
@@ -171,6 +183,7 @@ async def store_tokens(tokens_data):
                 "pricechange1h": insert_stmt.excluded.pricechange1h,
                 "last_seen_at": now,
                 "is_active": True,
+                "is_believe": insert_stmt.excluded.is_believe,
             }
         )
 
@@ -309,7 +322,8 @@ async def fetch_tokens_from_db():
             "dex_url": row["dex_url"],
             "priceChange1h": row["pricechange1h"],
             "WomScore": row["wom_score"],
-            "TweetCount": row["tweet_count"]
+            "TweetCount": row["tweet_count"],
+            "IsBelieve": row["is_believe"],
         }
         for row in rows
     ]

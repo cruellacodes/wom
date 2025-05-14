@@ -22,6 +22,7 @@ tokens = Table(
     Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
     Column("last_seen_at", DateTime(timezone=True), default=default),
     Column("is_active", Boolean, default=True),
+    Column("is_believe", Boolean, default=False),
 )
 
 tweets = Table(
