@@ -27,24 +27,25 @@ if not api_token:
 
 async def extract_and_format_symbol(raw: str) -> tuple[str, bool]:
     try:
-        parts = raw.split()
-        ignore_words = {"DLMM", "CLMM", "CPMM", "SOL", "/"}
-        believe = any(part.upper() == "DYN" for part in parts)
+        lines = raw.strip().split("\n")
+        believe = any("DYN" in line.upper() for line in lines)
 
-        # Skip tokens like "#4" or anything that starts with "#" or is purely numeric
+        ignore_words = {"DLMM", "CLMM", "CPMM", "SOL", "/", ""}
+        # Remove lines that are known labels or irrelevant
         candidates = [
-            part for part in parts
-            if part.upper() not in ignore_words
-            and not part.startswith("#")
-            and not part.isdigit()
-            and part.isalpha()  # Avoid 10, etc
+            line.strip()
+            for line in lines
+            if line.strip().upper() not in ignore_words
+            and not line.strip().startswith("#")
+            and not line.strip().isdigit()
         ]
 
         if not candidates:
-            raise ValueError("No token symbol candidates found")
+            raise ValueError(f"No valid token symbol candidates in: {raw}")
 
-        # Use the first valid candidate as symbol
+        # First valid line is likely the token symbol
         symbol = candidates[0].strip().lstrip("$")
+
         return f"${symbol.lower()}", believe
 
     except Exception as e:
@@ -120,6 +121,8 @@ async def get_filtered_pairs():
         for item in items:
             raw_symbol = item.get("tokenSymbol", "")
             symbol_with_dollar, is_believe = await extract_and_format_symbol(raw_symbol)
+
+            logging.debug(f"Parsed: {raw_symbol} → {symbol_with_dollar}, believe={is_believe}")
 
             # Validate the symbol
             if not is_valid_token_symbol(symbol_with_dollar):
