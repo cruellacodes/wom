@@ -342,6 +342,10 @@ async def fetch_tokens_from_db():
 # ────────────────────────────────────────────
 # Get token info from DEX
 # ────────────────────────────────────────────
+
+DEX_PROXY_URL = os.getenv("DEX_PROXY_URL")
+DEX_PROXY_SECRET = os.getenv("DEX_PROXY_SECRET")
+
 async def fetch_token_info_by_pair_address(pair_id: str, chain_id: str = "solana") -> dict | None:
     params = {
         "pair": pair_id,
@@ -349,12 +353,12 @@ async def fetch_token_info_by_pair_address(pair_id: str, chain_id: str = "solana
     }
 
     headers = {
-        "x-secret": os.getenv("DEX_PROXY_SECRET")
+        "x-secret": DEX_PROXY_SECRET
     }
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(os.getenv("DEX_PROXY_URL"), params=params, headers=headers)
+            response = await client.get(DEX_PROXY_URL, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
             return data.get("pair")
