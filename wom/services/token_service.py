@@ -343,20 +343,21 @@ async def fetch_tokens_from_db():
 # Get token info from DEX
 # ────────────────────────────────────────────
 async def fetch_token_info_by_pair_address(pair_id: str, chain_id: str = "solana") -> dict | None:
-    url = f"https://api.dexscreener.com/latest/dex/pairs/{chain_id}/{pair_id}"
+    params = {
+        "pair": pair_id,
+        "chain": chain_id,
+    }
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://dexscreener.com/"
+        "x-secret": os.getenv("DEX_PROXY_SECRET")
     }
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, timeout=10)
+            response = await client.get(os.getenv("DEX_PROXY_URL"), params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
-            return data.get("pair") 
+            return data.get("pair")
         except Exception as e:
             logging.error(f"Failed to fetch token info for {pair_id}: {e}")
             return None
