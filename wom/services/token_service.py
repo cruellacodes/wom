@@ -392,7 +392,8 @@ async def update_missing_tokens_info(fetched_token_symbols):
 
 
 async def update_token_in_db(address: str, token_info: dict):
-    token_symbol=f'${token_info["baseToken"]["symbol"]}',
+    token_symbol=f'${token_info["baseToken"]["symbol"]}'
+    
     update_query = tokens.update().where(tokens.c.address == address).values(
         token_symbol=token_symbol,
         token_name=token_info["baseToken"]["name"],
