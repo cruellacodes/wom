@@ -395,9 +395,6 @@ async def update_token_in_db(address: str, token_info: dict):
     token_symbol=f'${token_info["baseToken"]["symbol"]}'
     
     update_query = tokens.update().where(tokens.c.address == address).values(
-        token_symbol=token_symbol,
-        token_name=token_info["baseToken"]["name"],
-        dex_url=token_info["url"],
         volume_usd=token_info.get("volume", {}).get("h24", 0),
         liquidity_usd=token_info.get("liquidity", {}).get("usd", 0),
         market_cap_usd=token_info.get("marketCap", 0),
