@@ -24,33 +24,6 @@ api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Run every 60s
-    @repeat_every(seconds=60)
-    async def scheduled_deactivation_task() -> None:
-        try:
-            await deactivate_low_activity_tokens()
-            logging.info("Deactivation task ran successfully")
-        except Exception as e:
-            logging.error(f"Deactivation task failed: {e}")
-
-    # Run every 60s
-    @repeat_every(seconds=60)
-    async def scheduled_deletion_task() -> None:
-        try:
-            await delete_old_tokens()
-            logging.info("Old token deletion ran successfully")
-        except Exception as e:
-            logging.error(f"Token deletion failed: {e}")
-
-    await scheduled_deactivation_task()
-    await scheduled_deletion_task()
-    yield
-
-app = FastAPI(lifespan=lifespan)
-
-
 # ────────────────────────────────────────────
 # Token Extraction
 # ────────────────────────────────────────────
