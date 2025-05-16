@@ -8,7 +8,7 @@ from services.token_service import fetch_tokens
 from services.tweet_service import run_tweet_pipeline
 from routes.tokens import tokens_router
 from routes.tweets import tweets_router
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Set up logging
 logging.basicConfig(
@@ -23,20 +23,26 @@ async def lifespan(app: FastAPI):
 
     async def schedule_token_fetch():
         while True:
+            start = datetime.now(timezone.utc)
             try:
                 await fetch_tokens()
             except Exception as e:
                 logging.error(f"[fetch_tokens error] {e}")
-            await asyncio.sleep(300)  # Every 5 minutes
+            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+            await asyncio.sleep(max(0, 300 - elapsed))
+
 
     async def schedule_tweet_fetch():
         while True:
+            start = datetime.now(timezone.utc)
             logging.info("Fetching tweets for all active tokens...")
             try:
                 await run_tweet_pipeline()
             except Exception as e:
                 logging.error(f"[tweet_pipeline error] {e}")
-            await asyncio.sleep(60)  # Every 1 minute
+            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+            await asyncio.sleep(max(0, 60 - elapsed))
+
 
     # Background tasks
     token_task = asyncio.create_task(schedule_token_fetch())
