@@ -237,8 +237,8 @@ async def store_tokens(tokens_data):
 # - Created more than 3 hours ago AND total tweet_count < 20
 # - Created more than 24 hours ago AND volume_usd < 200,000
 # - Created more than 23 hours ago AND fewer than 10 tweets in the last 24h
+# - Market cap is less than 40,000
 # ────────────────────────────────────────────
-
 async def deactivate_low_activity_tokens():
     now = datetime.now(timezone.utc)
     twenty_four_hours_ago = now - timedelta(hours=24)
@@ -261,7 +261,8 @@ async def deactivate_low_activity_tokens():
         tokens.c.address,
         tokens.c.created_at,
         tokens.c.tweet_count,
-        tokens.c.volume_usd
+        tokens.c.volume_usd,
+        tokens.c.market_cap_usd 
     ]).where(tokens.c.is_active == True)
     tokens_data = await database.fetch_all(active_tokens_query)
 
@@ -274,6 +275,7 @@ async def deactivate_low_activity_tokens():
         tweet_count_total = token["tweet_count"]
         tweet_count_24h = tweet_count_map.get(symbol, 0)
         volume = token["volume_usd"]
+        market_cap = token["market_cap_usd"] or 0  # fallback to 0 if null
 
         age_hours = (now - created_at).total_seconds() / 3600
 
@@ -281,6 +283,7 @@ async def deactivate_low_activity_tokens():
             (age_hours > 3 and tweet_count_total < 20)
             or (age_hours > 24 and volume < 200_000)
             or (age_hours > 23 and tweet_count_24h < 10)
+            or (market_cap < 40_000)
         ):
             tokens_to_deactivate.append(symbol)
 
@@ -293,7 +296,7 @@ async def deactivate_low_activity_tokens():
         )
         await database.execute(update_query)
 
-    logging.info(f"Deactivated {len(tokens_to_deactivate)} low-activity tokens: {tokens_to_deactivate}")
+    logging.info(f"🔻 Deactivated {len(tokens_to_deactivate)} low-activity tokens: {tokens_to_deactivate}")
 
 # ────────────────────────────────────────────
 # Delete Tokens Older than 5days
