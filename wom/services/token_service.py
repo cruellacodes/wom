@@ -6,11 +6,14 @@ import httpx
 from dotenv import load_dotenv
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select, func
-from sqlalchemy import and_, delete, select, or_
+from sqlalchemy import and_, delete, select
 from db import database
 from models import tokens, tweets
-import re
 import unicodedata
+from fastapi import FastAPI
+from fastapi_utils.tasks import repeat_every
+from contextlib import asynccontextmanager
+import logging
 
 # Logging setup
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -20,6 +23,33 @@ load_dotenv()
 api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Run every 60s
+    @repeat_every(seconds=60)
+    async def scheduled_deactivation_task() -> None:
+        try:
+            await deactivate_low_activity_tokens()
+            logging.info("Deactivation task ran successfully")
+        except Exception as e:
+            logging.error(f"Deactivation task failed: {e}")
+
+    # Run every 60s
+    @repeat_every(seconds=60)
+    async def scheduled_deletion_task() -> None:
+        try:
+            await delete_old_tokens()
+            logging.info("Old token deletion ran successfully")
+        except Exception as e:
+            logging.error(f"Token deletion failed: {e}")
+
+    await scheduled_deactivation_task()
+    await scheduled_deletion_task()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
 
 # ────────────────────────────────────────────
 # Token Extraction
@@ -203,7 +233,7 @@ async def store_tokens(tokens_data):
     logging.info(f"Stored/Updated {len(tokens_data)} tokens.")
 
 # ────────────────────────────────────────────
-# Deactivation of Inactive Tokens:
+# Deactivation of active Tokens:
 # - Created more than 3 hours ago AND total tweet_count < 20
 # - Created more than 24 hours ago AND volume_usd < 200,000
 # - Created more than 23 hours ago AND fewer than 10 tweets in the last 24h
@@ -298,23 +328,16 @@ async def delete_old_tokens():
 
     logging.info(f"Deleted {deleted_tokens} tokens and {deleted_tweets} tweets for symbols: {old_symbols}")
 
-
 # ────────────────────────────────────────────
 # Public Entrypoint
 # ────────────────────────────────────────────
 async def fetch_tokens():
     tokens_data = await get_filtered_pairs()
-
     if tokens_data:
         await store_tokens(tokens_data)
         fetched_symbols = [t["token_symbol"] for t in tokens_data]
         await update_missing_tokens_info(fetched_symbols) 
-
-    await deactivate_low_activity_tokens()
-    await delete_old_tokens()
-
     return tokens_data
-
 
 # ────────────────────────────────────────────
 # Fetch From DB for FE Display
