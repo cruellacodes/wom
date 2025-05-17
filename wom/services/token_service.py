@@ -10,9 +10,6 @@ from sqlalchemy import and_, delete, select
 from db import database
 from models import tokens, tweets
 import unicodedata
-from fastapi import FastAPI
-from fastapi_utils.tasks import repeat_every
-from contextlib import asynccontextmanager
 import logging
 
 # Logging setup
@@ -94,51 +91,86 @@ async def get_filtered_pairs():
 
     filtered_tokens = []
     seen_symbols = set()
+    timeout = httpx.Timeout(90.0, connect=10.0)  # 90s read timeout, 10s connect timeout
+    poll_interval = 5
+    max_wait_time = 120  # seconds
 
-    async with httpx.AsyncClient() as client:
-        # Start Apify run
-        response = await client.post(
-            f"https://api.apify.com/v2/acts/crypto-scraper~dexscreener-tokens-scraper/runs?token={api_token}",
-            json=run_input
-        )
-        run_id = response.json()["data"]["id"]
-
-        # Wait for Apify to complete
-        while True:
-            status_resp = await client.get(
-                f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        # Step 1: Start Apify actor
+        try:
+            response = await client.post(
+                f"https://api.apify.com/v2/acts/crypto-scraper~dexscreener-tokens-scraper/runs?token={api_token}",
+                json=run_input
             )
-            status = status_resp.json()["data"]["status"]
-            if status == "SUCCEEDED":
-                break
-            if status in ["FAILED", "TIMED_OUT", "ABORTED"]:
-                raise RuntimeError(f"Apify run failed with status: {status}")
-            await asyncio.sleep(5)
+            response.raise_for_status()
+            run_id = response.json()["data"]["id"]
+            logging.info(f"Triggered Apify actor: run_id = {run_id}")
+        except Exception as e:
+            logging.error(f"Failed to start Apify actor: {e}")
+            return []
 
-        # Get result items
-        dataset_id = status_resp.json()["data"]["defaultDatasetId"]
-        data_resp = await client.get(
-            f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
-        )
-        items = data_resp.json()
+        # Step 2: Poll for completion
+        start_time = datetime.utcnow()
+        while True:
+            if (datetime.utcnow() - start_time).total_seconds() > max_wait_time:
+                logging.error("Apify run timed out after waiting too long.")
+                return []
 
-        logging.info(f"Apify returned {len(items)} items. Filtering...")
+            try:
+                status_resp = await client.get(
+                    f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
+                )
+                status = status_resp.json()["data"]["status"]
+                logging.info(f"Apify run {run_id} status: {status}")
 
+                if status == "SUCCEEDED":
+                    break
+                if status in ["FAILED", "TIMED_OUT", "ABORTED"]:
+                    logging.error(f"Apify run failed with status: {status}")
+                    return []
+                await asyncio.sleep(poll_interval)
+            except httpx.ReadTimeout:
+                logging.warning("Polling Apify timed out – retrying...")
+                continue
+            except Exception as e:
+                logging.error(f"Error while checking Apify run status: {e}")
+                return []
+
+        # Step 3: Get dataset ID
+        dataset_id = status_resp.json()["data"].get("defaultDatasetId")
+        if not dataset_id:
+            logging.error("Apify run succeeded but no dataset was found.")
+            return []
+
+        # Step 4: Fetch dataset
+        try:
+            data_resp = await client.get(
+                f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
+            )
+            items = data_resp.json()
+            logging.info(f"Fetched {len(items)} items from Apify dataset.")
+        except Exception as e:
+            logging.error(f"Failed to fetch dataset items: {e}")
+            return []
+
+        if not items:
+            logging.warning("Apify dataset was empty.")
+            return []
+
+        logging.debug(f"Sample Apify item: {items[0]}")
+
+        # Step 5: Filter + format results
         for item in items:
             raw_symbol = item.get("tokenSymbol", "")
             symbol_with_dollar, is_believe = await extract_and_format_symbol(raw_symbol)
 
-            logging.debug(f"Parsed: {raw_symbol} → {symbol_with_dollar}, believe={is_believe}")
-
-            # Validate the symbol
             if not is_valid_token_symbol(symbol_with_dollar):
                 logging.info(f"Skipping invalid symbol: {symbol_with_dollar}")
                 continue
-
             if symbol_with_dollar in seen_symbols:
                 continue
-            seen_symbols.add(symbol_with_dollar)
 
+            seen_symbols.add(symbol_with_dollar)
             filtered_tokens.append({
                 "token_symbol": symbol_with_dollar,
                 "token_name": item.get("tokenName", "Unknown"),
@@ -152,7 +184,7 @@ async def get_filtered_pairs():
                 "is_believe": is_believe,
             })
 
-        logging.info(f"Filtered {len(filtered_tokens)} tokens: {[t['token_symbol'] for t in filtered_tokens]}")
+        logging.info(f"{len(filtered_tokens)} filtered tokens: {[t['token_symbol'] for t in filtered_tokens]}")
         return filtered_tokens
 
 # ────────────────────────────────────────────
@@ -308,6 +340,8 @@ async def delete_old_tokens():
 # Public Entrypoint
 # ────────────────────────────────────────────
 async def fetch_tokens():
+    logging.info("🟢 fetch_tokens() started")
+
     tokens_data = await get_filtered_pairs()
     if tokens_data:
         await store_tokens(tokens_data)
