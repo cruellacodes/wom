@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
         make_loop(fetch_tokens,            300),  # every 5m
         make_loop(run_tweet_pipeline,       60),  # every 1m
         make_loop(deactivate_low_activity_tokens, 60),  # every 1m
-        make_loop(delete_old_tokens,        60),  # every 1m
+        # make_loop(delete_old_tokens,        60),  # every 1m
     ]
 
     yield  
