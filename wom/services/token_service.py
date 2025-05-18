@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 import os
@@ -20,40 +19,6 @@ load_dotenv()
 api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
-
-# ────────────────────────────────────────────
-# Token Extraction
-# ────────────────────────────────────────────
-async def extract_and_format_symbol(raw: str) -> tuple[str, bool]:
-    try:
-        lines = [line.strip() for line in raw.strip().split("\n") if line.strip()]
-        is_believe = any(line.upper() == "DYN" for line in lines)
-
-        ignore_words = {"DLMM", "CLMM", "CPMM", "SOL", "USDC", "/", "", "TRUMP", "DYN"}
-
-        # Remove lines that are:
-        # - known labels (DLMM, SOL, etc)
-        # - numeric (e.g. "#1")
-        # - comments (start with "#")
-        # - or explicitly "DYN" (so we don’t use it as a symbol)
-        candidates = [
-            line
-            for line in lines
-            if line.upper() not in ignore_words
-            and not line.startswith("#")
-            and not line.isdigit()
-        ]
-
-        if not candidates:
-            raise ValueError(f"No valid token symbol candidates in: {raw}")
-
-        symbol = candidates[0].lstrip("$").strip()
-
-        return f"${symbol.lower()}", is_believe
-
-    except Exception as e:
-        logging.error(f"Failed to parse token symbol: {raw} – {e}")
-        return "$unknown", False
 
 # ────────────────────────────────────────────
 # Fetch & Filter Tokens
@@ -79,90 +44,71 @@ def is_valid_token_symbol(symbol: str) -> bool:
     return True
 
 # -- Main function to get filtered tokens --
+VALID_DEX_IDS = {"meteora", "raydium", "pumpswap"}
+MIN_LIQ_USD = 50_000
+MIN_MCAP_USD = 200_000
+MIN_VOL_USD = 150_000
+
+# -- Helper to validate token symbols --
+def is_valid_token_symbol(symbol: str) -> bool:
+    symbol_clean = symbol.lstrip("$").strip()
+    if not (3 <= len(symbol_clean) <= 15):
+        return False
+    if not symbol_clean.isalpha():
+        return False
+    for char in symbol_clean:
+        if unicodedata.category(char).startswith("So"):
+            return False
+    return True
+
+# -- Main function to get filtered tokens --
 async def get_filtered_pairs():
     run_input = {
-        "chainName": "solana",
-        "filterArgs": [
-            "?rankBy=trendingScoreH6&order=desc&chainIds=solana&dexIds=meteora,raydium,pumpswap,pumpfun&minLiq=50000&minMarketCap=200000&maxAge=48&min24HVol=150000"
-        ],
-        "fromPage": 1,
-        "toPage": 1,
+        "limit": 150,
+        "pageCount": 2,
+        "chain": "solana",
+        "allPools": False,
+        "timeFrame": "h6",
+        "sortOrder": "desc",
+        "sortRank": "trendingScoreH6",
+        "proxyConfiguration": {
+            "useApifyProxy": True,
+            "apifyProxyGroups": []
+        }
     }
 
     filtered_tokens = []
     seen_symbols = set()
-    timeout = httpx.Timeout(90.0, connect=10.0)  # 90s read timeout, 10s connect timeout
-    poll_interval = 5
-    max_wait_time = 120  # seconds
+    timeout = httpx.Timeout(90.0, connect=10.0)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        # Step 1: Start Apify actor
         try:
             response = await client.post(
-                f"https://api.apify.com/v2/acts/crypto-scraper~dexscreener-tokens-scraper/runs?token={api_token}",
+                "https://api.apify.com/v2/acts/muhammetakkurtt~dexscreener-scraper/run-sync?token=YOUR_APIFY_API_TOKEN",
                 json=run_input
             )
             response.raise_for_status()
-            run_id = response.json()["data"]["id"]
-            logging.info(f"Triggered Apify actor: run_id = {run_id}")
+            items = response.json()
+            logging.info(f"Fetched {len(items)} tokens from Apify actor.")
         except Exception as e:
-            logging.error(f"Failed to start Apify actor: {e}")
+            logging.error(f"Failed to run Apify actor: {e}")
             return []
 
-        # Step 2: Poll for completion
-        start_time = datetime.utcnow()
-        while True:
-            if (datetime.utcnow() - start_time).total_seconds() > max_wait_time:
-                logging.error("Apify run timed out after waiting too long.")
-                return []
-
-            try:
-                status_resp = await client.get(
-                    f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
-                )
-                status = status_resp.json()["data"]["status"]
-                logging.info(f"Apify run {run_id} status: {status}")
-
-                if status == "SUCCEEDED":
-                    break
-                if status in ["FAILED", "TIMED_OUT", "ABORTED"]:
-                    logging.error(f"Apify run failed with status: {status}")
-                    return []
-                await asyncio.sleep(poll_interval)
-            except httpx.ReadTimeout:
-                logging.warning("Polling Apify timed out – retrying...")
-                continue
-            except Exception as e:
-                logging.error(f"Error while checking Apify run status: {e}")
-                return []
-
-        # Step 3: Get dataset ID
-        dataset_id = status_resp.json()["data"].get("defaultDatasetId")
-        if not dataset_id:
-            logging.error("Apify run succeeded but no dataset was found.")
-            return []
-
-        # Step 4: Fetch dataset
-        try:
-            data_resp = await client.get(
-                f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
-            )
-            items = data_resp.json()
-            logging.info(f"Fetched {len(items)} items from Apify dataset.")
-        except Exception as e:
-            logging.error(f"Failed to fetch dataset items: {e}")
-            return []
-
-        if not items:
-            logging.warning("Apify dataset was empty.")
-            return []
-
-        logging.debug(f"Sample Apify item: {items[0]}")
-
-        # Step 5: Filter + format results
         for item in items:
-            raw_symbol = item.get("tokenSymbol", "")
-            symbol_with_dollar, is_believe = await extract_and_format_symbol(raw_symbol)
+            dex = item.get("dexId", "")
+            liq = item.get("liquidity", {}).get("usd", 0)
+            mcap = item.get("marketCap", 0)
+            vol = item.get("volume", {}).get("h24", 0)
+
+            if dex not in VALID_DEX_IDS:
+                continue
+            if liq < MIN_LIQ_USD or mcap < MIN_MCAP_USD or vol < MIN_VOL_USD:
+                continue
+
+            base = item.get("baseToken", {})
+            raw_symbol = base.get("symbol", "")
+            symbol_with_dollar = f"${base.get('symbol', '').strip().lower()}"
+            is_believe = "DYN" in item.get("labels", [])
 
             if not is_valid_token_symbol(symbol_with_dollar):
                 logging.info(f"Skipping invalid symbol: {symbol_with_dollar}")
@@ -173,14 +119,13 @@ async def get_filtered_pairs():
             seen_symbols.add(symbol_with_dollar)
             filtered_tokens.append({
                 "token_symbol": symbol_with_dollar,
-                "token_name": item.get("tokenName", "Unknown"),
-                "address": item.get("address", "N/A"),
-                "age_hours": item.get("age", 0),
-                "volume_usd": item.get("volumeUsd", 0),
-                "maker_count": item.get("makerCount", 0),
-                "liquidity_usd": item.get("liquidityUsd", 0),
-                "market_cap_usd": item.get("marketCapUsd", 0),
-                "priceChange1h": item.get("priceChange1h", 0),
+                "token_name": base.get("name", "Unknown"),
+                "address": base.get("address", "N/A"),
+                "volume_usd": vol,
+                "maker_count": None,
+                "liquidity_usd": liq,
+                "market_cap_usd": mcap,
+                "priceChange1h": item.get("priceChange", {}).get("h1", 0),
                 "is_believe": is_believe,
             })
 
