@@ -84,7 +84,7 @@ async def get_filtered_pairs():
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(
-                "https://api.apify.com/v2/acts/muhammetakkurtt~dexscreener-scraper/run-sync?token=YOUR_APIFY_API_TOKEN",
+                "https://api.apify.com/v2/acts/muhammetakkurtt~dexscreener-scraper/run-sync?token={api_token}",
                 json=run_input
             )
             response.raise_for_status()
