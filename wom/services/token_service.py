@@ -83,25 +83,37 @@ async def get_filtered_pairs():
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            # 🚀 Trigger actor
+            # Step 1: Trigger the Apify actor
             response = await client.post(
                 f"https://api.apify.com/v2/acts/muhammetakkurtt~dexscreener-scraper/run-sync?token={api_token}",
                 json=run_input
             )
             response.raise_for_status()
-            items = response.json()
-            logging.info(f"[INFO] Fetched {len(items)} tokens from Apify actor.")
+            run_data = response.json()
+            dataset_id = run_data.get("data", {}).get("defaultDatasetId")
+            if not dataset_id:
+                logging.error("[ERROR] No dataset ID returned from Apify.")
+                return []
+
+            # Step 2: Fetch dataset contents
+            dataset_resp = await client.get(
+                f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
+            )
+            dataset_resp.raise_for_status()
+            items = dataset_resp.json()
+            logging.info(f"[INFO] Retrieved {len(items)} tokens from Apify dataset.")
+
         except Exception as e:
             logging.error(f"[ERROR] Failed to run Apify actor: {e}")
             return []
 
+        # Step 3: Filter + format tokens
         for item in items:
             dex = item.get("dexId", "")
             liq = item.get("liquidity", {}).get("usd", 0)
             mcap = item.get("marketCap", 0)
             vol = item.get("volume", {}).get("h24", 0)
 
-            # 🧪 Filter based on liquidity, market cap, volume, dex
             if dex not in VALID_DEX_IDS:
                 continue
             if liq < MIN_LIQ_USD or mcap < MIN_MCAP_USD or vol < MIN_VOL_USD:
@@ -109,7 +121,7 @@ async def get_filtered_pairs():
 
             base = item.get("baseToken", {})
             symbol_raw = base.get("symbol", "")
-            symbol_with_dollar = f"${symbol_raw.strip().lower()}"
+            symbol_with_dollar = f"${symbol_raw.casefold().strip()}"
             is_believe = "DYN" in item.get("labels", [])
 
             if not is_valid_token_symbol(symbol_with_dollar):
@@ -125,7 +137,7 @@ async def get_filtered_pairs():
                 "token_name": base.get("name", "Unknown"),
                 "address": base.get("address", "N/A"),
                 "volume_usd": vol,
-                "maker_count": None, 
+                "maker_count": None,
                 "liquidity_usd": liq,
                 "market_cap_usd": mcap,
                 "priceChange1h": item.get("priceChange", {}).get("h1", 0),
