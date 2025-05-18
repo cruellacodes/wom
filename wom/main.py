@@ -42,7 +42,7 @@ def make_loop(fn, interval_seconds):
         except asyncio.CancelledError:
             logging.info(f"[{fn.__name__}] Task was cancelled.")
         except Exception as e:
-            logging.critical(f"[{fn.__name__}] 💀 Task crashed fatally: {e}", exc_info=True)
+            logging.critical(f"[{fn.__name__}] Task crashed fatally: {e}", exc_info=True)
 
     task.add_done_callback(handle_crash)
     return task
@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
 
     # 2) Kick off ALL 4 loops as tasks
     tasks = [
-        make_loop(fetch_tokens,            300),  # every 5m
+        make_loop(fetch_tokens,            900),  # every 5m
         make_loop(run_tweet_pipeline,       60),  # every 1m
         make_loop(deactivate_low_activity_tokens, 60),  # every 1m
         # make_loop(delete_old_tokens,        60),  # every 1m

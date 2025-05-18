@@ -43,6 +43,21 @@ def is_valid_token_symbol(symbol: str) -> bool:
 
     return True
 
+# -- Helper to validate age --
+def format_token_age(pair_created_at_ms: int) -> str:
+    now = datetime.now(timezone.utc)
+    created_at = datetime.fromtimestamp(pair_created_at_ms / 1000, tz=timezone.utc)
+    age_seconds = (now - created_at).total_seconds()
+
+    if age_seconds < 3600:
+        return "<1h"
+    elif age_seconds < 86400:
+        hours = int(age_seconds // 3600)
+        return f"{hours}h"
+    else:
+        days = int(age_seconds // 86400)
+        return f"{days}d"
+
 # -- Main function to get filtered tokens --
 VALID_DEX_IDS = {"meteora", "raydium", "pumpswap"}
 MIN_LIQ_USD = 50_000
@@ -83,31 +98,17 @@ async def get_filtered_pairs():
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            # Step 1: Trigger the Apify actor
             response = await client.post(
-                f"https://api.apify.com/v2/acts/muhammetakkurtt~dexscreener-scraper/run-sync?token={api_token}",
+                f"https://api.apify.com/v2/acts/muhammetakkurtt~dexscreener-scraper/run-sync-get-dataset-items?token={api_token}",
                 json=run_input
             )
             response.raise_for_status()
-            run_data = response.json()
-            dataset_id = run_data.get("data", {}).get("defaultDatasetId")
-            if not dataset_id:
-                logging.error("[ERROR] No dataset ID returned from Apify.")
-                return []
-
-            # Step 2: Fetch dataset contents
-            dataset_resp = await client.get(
-                f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
-            )
-            dataset_resp.raise_for_status()
-            items = dataset_resp.json()
-            logging.info(f"[INFO] Retrieved {len(items)} tokens from Apify dataset.")
-
+            items = response.json()
+            logging.info(f"[INFO] Got {len(items)} tokens from Apify dataset.")
         except Exception as e:
-            logging.error(f"[ERROR] Failed to run Apify actor: {e}")
+            logging.error(f"[ERROR] Apify actor failed: {e}")
             return []
 
-        # Step 3: Filter + format tokens
         for item in items:
             dex = item.get("dexId", "")
             liq = item.get("liquidity", {}).get("usd", 0)
@@ -121,7 +122,7 @@ async def get_filtered_pairs():
 
             base = item.get("baseToken", {})
             symbol_raw = base.get("symbol", "")
-            symbol_with_dollar = f"${symbol_raw.casefold().strip()}"
+            symbol_with_dollar = f"${symbol_raw.strip().lower()}"
             is_believe = "DYN" in item.get("labels", [])
 
             if not is_valid_token_symbol(symbol_with_dollar):
@@ -131,17 +132,20 @@ async def get_filtered_pairs():
                 continue
 
             seen_symbols.add(symbol_with_dollar)
+            pair_created_at = item.get("pairCreatedAt")
+            age_string = format_token_age(pair_created_at) if pair_created_at else "N/A"
 
             filtered_tokens.append({
                 "token_symbol": symbol_with_dollar,
                 "token_name": base.get("name", "Unknown"),
+                "image_url": item.get("info", {}).get("imageUrl", None),
                 "address": base.get("address", "N/A"),
                 "volume_usd": vol,
-                "maker_count": None,
                 "liquidity_usd": liq,
                 "market_cap_usd": mcap,
                 "priceChange1h": item.get("priceChange", {}).get("h1", 0),
                 "is_believe": is_believe,
+                "age": age_string,
             })
 
         logging.info(f"[DONE] {len(filtered_tokens)} tokens passed filters: {[t['token_symbol'] for t in filtered_tokens]}")
@@ -159,10 +163,10 @@ async def store_tokens(tokens_data):
         insert_stmt = insert(tokens).values(
             token_symbol=token_symbol,
             token_name=token.get("token_name"),
+            image_url=token.get("image_url"),
             address=token.get("address"),
-            age_hours=token.get("age_hours"),
+            age=token.get("age"),
             volume_usd=token.get("volume_usd"),
-            maker_count=token.get("maker_count"),
             liquidity_usd=token.get("liquidity_usd"),
             market_cap_usd=token.get("market_cap_usd"),
             dex_url=f"https://dexscreener.com/solana/{token.get('address')}",
@@ -180,9 +184,9 @@ async def store_tokens(tokens_data):
             set_={
                 "token_name": insert_stmt.excluded.token_name,
                 "address": insert_stmt.excluded.address,
-                "age_hours": insert_stmt.excluded.age_hours,
+                "image_url": insert_stmt.excluded.image_url,
+                "age": insert_stmt.excluded.age,
                 "volume_usd": insert_stmt.excluded.volume_usd,
-                "maker_count": insert_stmt.excluded.maker_count,
                 "liquidity_usd": insert_stmt.excluded.liquidity_usd,
                 "market_cap_usd": insert_stmt.excluded.market_cap_usd,
                 "dex_url": insert_stmt.excluded.dex_url,
@@ -300,8 +304,6 @@ async def delete_old_tokens():
 # Public Entrypoint
 # ────────────────────────────────────────────
 async def fetch_tokens():
-    logging.info("🟢 fetch_tokens() started")
-
     tokens_data = await get_filtered_pairs()
     if tokens_data:
         await store_tokens(tokens_data)
@@ -317,10 +319,10 @@ async def fetch_tokens_from_db():
 
     return [
         {
+            "Image": row["image_url"],
             "Token": row["token_symbol"],
-            "Age": row["age_hours"],
+            "Age": row["age"],
             "Volume": row["volume_usd"],
-            "MakerCount": row["maker_count"],
             "Liquidity": row["liquidity_usd"],
             "MarketCap": row["market_cap_usd"],
             "dex_url": row["dex_url"],
