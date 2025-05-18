@@ -28,15 +28,3 @@ async def get_tweets(token_symbol: str):
     except Exception as e:
         logging.error(f"Error fetching tweets for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
-
-@tweets_router.get("/tweet-buckets/")
-async def get_tweet_buckets_endpoint(token_symbol: str = Query(...)):
-    try:
-        result = await fetch_tweet_volume_buckets(token_symbol.lower().strip())
-        if not result:
-            raise HTTPException(status_code=404, detail="No bucket data found for this token.")
-
-        return {"token_symbol": token_symbol, "bucket_data": result}
-    except Exception as e:
-        logging.error(f"Error fetching tweet bucket data for {token_symbol}: {e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
