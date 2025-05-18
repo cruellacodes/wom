@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-import logging
 import os
 import httpx
 from dotenv import load_dotenv
@@ -10,6 +9,7 @@ from db import database
 from models import tokens, tweets
 import unicodedata
 import logging
+import asyncio
 
 # Logging setup
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -341,7 +341,7 @@ async def fetch_tokens_from_db():
 DEX_PROXY_URL = os.getenv("DEX_PROXY_URL")
 DEX_PROXY_SECRET = os.getenv("DEX_PROXY_SECRET")
 
-async def fetch_token_info_by_pair_address(pair_id: str, chain_id: str = "solana") -> dict | None:
+async def fetch_token_info_by_address(pair_id: str, chain_id: str = "solana") -> dict | None:
     params = {
         "pair": pair_id,
         "chain": chain_id,
@@ -356,10 +356,14 @@ async def fetch_token_info_by_pair_address(pair_id: str, chain_id: str = "solana
             response = await client.get(DEX_PROXY_URL, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
-            return data.get("pair")
+            if isinstance(data, list) and data:
+                return data[0]
         except Exception as e:
             logging.error(f"Failed to fetch token info for {pair_id}: {e}")
             return None
+
+MAX_CONCURRENT_REQUESTS = 10  # Control concurrency (tune based on your API limit)
+semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 async def update_missing_tokens_info(fetched_token_symbols):
     db_tokens_query = select(tokens.c.token_symbol, tokens.c.address).where(tokens.c.is_active == True)
@@ -370,25 +374,30 @@ async def update_missing_tokens_info(fetched_token_symbols):
 
     logging.info(f"{len(missing_tokens)} tokens missing info: {[t['token_symbol'] for t in missing_tokens]}")
 
-    for token in missing_tokens:
-        address = token["address"]
-        symbol = token["token_symbol"]
+    # Launch concurrent tasks with limited concurrency
+    tasks = [
+        update_token_task(token["token_symbol"], token["address"])
+        for token in missing_tokens
+    ]
 
+    await asyncio.gather(*tasks)
+
+
+async def update_token_task(symbol: str, address: str):
+    async with semaphore:
         logging.info(f"Fetching info for token {symbol} ({address})...")
 
-        token_info = await fetch_token_info_by_pair_address(address)
+        token_info = await fetch_token_info_by_address(address)
 
         if not token_info:
             logging.warning(f"Failed to fetch info for {symbol} ({address})")
-            continue
+            return
 
         await update_token_in_db(address, token_info)
         logging.info(f"Successfully updated {symbol} ({address})")
 
 
 async def update_token_in_db(address: str, token_info: dict):
-    token_symbol=f'${token_info["baseToken"]["symbol"]}'
-    
     update_query = tokens.update().where(tokens.c.address == address).values(
         volume_usd=token_info.get("volume", {}).get("h24", 0),
         liquidity_usd=token_info.get("liquidity", {}).get("usd", 0),

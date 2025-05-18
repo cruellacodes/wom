@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query # type: ignore
 from sqlalchemy import select, func # type: ignore
 from models import tokens
 from db import database
-from services.token_service import fetch_token_info_by_pair_address
+from services.token_service import fetch_token_info_by_address, format_token_age
 
 tokens_router = APIRouter()
 
@@ -31,14 +31,16 @@ async def get_tokens(
         "totalCount": total,
     }
 
-@tokens_router.get("/search-token/{chain_id}/{token_address}")
-async def search_token(chain_id: str, token_address: str):
-    token_info = await fetch_token_info_by_pair_address(token_address.lower(), chain_id)
+@tokens_router.get("/search-token/{token_address}")
+async def search_token(token_address: str):
+    token_pairs = await fetch_token_info_by_address(token_address.lower())
 
-    if not token_info:
+    if not token_pairs or not isinstance(token_pairs, list):
         raise HTTPException(status_code=404, detail="Token not found on Dexscreener.")
 
+    token_info = token_pairs[0]  # Get first result
     base = token_info.get("baseToken", {})
+    pair_created_at = token_info.get("pairCreatedAt")
 
     return {
         "symbol": base.get("symbol"),
@@ -47,8 +49,9 @@ async def search_token(chain_id: str, token_address: str):
         "marketCap": token_info.get("marketCap", 0),
         "volume24h": token_info.get("volume", {}).get("h24", 0),
         "liquidity": token_info.get("liquidity", {}).get("usd", 0),
-        "priceUsd": token_info.get("priceUsd", None),
+        "priceUsd": token_info.get("priceUsd"),
         "priceChange1h": token_info.get("priceChange", {}).get("h1", 0),
         "dexUrl": token_info.get("url", "#"),
-        "ageHours": None,
+        "imageUrl": token_info.get("info", {}).get("imageUrl"),
+        "age": format_token_age(pair_created_at) if pair_created_at else "N/A",
     }

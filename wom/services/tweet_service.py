@@ -246,31 +246,6 @@ async def fetch_stored_tweets(token):
     query = tweets.select().where(tweets.c.token_symbol == token.lower())
     return await database.fetch_all(query)
 
-async def fetch_tweet_volume_buckets(token):
-    now = datetime.now(timezone.utc)
-    buckets = {
-        "1h": now - timedelta(hours=1),
-        "6h": now - timedelta(hours=6),
-        "12h": now - timedelta(hours=12),
-        "24h": now - timedelta(hours=24),
-        "48h": now - timedelta(hours=48),
-    }
-
-    rows = await database.fetch_all(
-        select(tweets.c.created_at).where(tweets.c.token_symbol == token.lower())
-    )
-
-    volume = {key: 0 for key in buckets}
-    for row in rows:
-        created = row["created_at"]
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
-        for k, dt in buckets.items():
-            if created >= dt:
-                volume[k] += 1
-
-    return volume
-
 # === One-token workflow ===
 
 async def fetch_and_analyze(token_symbol, store=True):
@@ -350,6 +325,67 @@ def compute_final_wom_score(tweets):
     final_score = round(average_score, 2)
 
     return final_score
+
+# === Stateless fetching ===
+MAX_FETCH_PAGES = 5  # prevent infinite retries
+TWEET_TIME_WINDOW_HOURS = 48
+
+async def fetch_and_analyze_stateless(token_symbol: str):
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=TWEET_TIME_WINDOW_HOURS)
+
+    all_tweets = []
+    seen_ids = set()
+    page = 0
+
+    while page < MAX_FETCH_PAGES:
+        batch = await fetch_with_retries(token_symbol, page=page)  # make sure this supports pagination
+        if not batch:
+            break
+
+        # Filter for unique + recent tweets
+        filtered_batch = [
+            t for t in batch
+            if t.get("created_at") and
+               start_time <= t["created_at"] <= end_time and
+               t["id"] not in seen_ids
+        ]
+
+        if not filtered_batch:
+            break
+
+        all_tweets.extend(filtered_batch)
+        seen_ids.update(t["id"] for t in filtered_batch)
+
+        # If we hit sufficient time window coverage, stop
+        oldest = min(t["created_at"] for t in filtered_batch)
+        if oldest <= start_time:
+            break
+
+        page += 1
+
+    if not all_tweets:
+        return {"tweets": [], "wom_score": 1.0}
+
+    # Preprocess
+    processed_dict = await preprocess_tweets(all_tweets, token_symbol)
+    processed = processed_dict.get(token_symbol, [])
+
+    if not processed:
+        return {"tweets": [], "wom_score": 1.0}
+
+    # Sentiment analysis
+    sentiment_dict = await get_sentiment({token_symbol: processed})
+    sentiment = sentiment_dict.get(token_symbol, {})
+    tweets = sentiment.get("tweets", [])
+
+    wom_score = compute_final_wom_score(tweets)
+
+    return {
+        "tweets": tweets,
+        "wom_score": wom_score
+    }
+
 
 # === Run for all active tokens ===
 
