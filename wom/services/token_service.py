@@ -83,15 +83,16 @@ async def get_filtered_pairs():
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
+            # 🚀 Trigger actor
             response = await client.post(
                 f"https://api.apify.com/v2/acts/muhammetakkurtt~dexscreener-scraper/run-sync?token={api_token}",
                 json=run_input
             )
             response.raise_for_status()
             items = response.json()
-            logging.info(f"Fetched {len(items)} tokens from Apify actor.")
+            logging.info(f"[INFO] Fetched {len(items)} tokens from Apify actor.")
         except Exception as e:
-            logging.error(f"Failed to run Apify actor: {e}")
+            logging.error(f"[ERROR] Failed to run Apify actor: {e}")
             return []
 
         for item in items:
@@ -100,36 +101,38 @@ async def get_filtered_pairs():
             mcap = item.get("marketCap", 0)
             vol = item.get("volume", {}).get("h24", 0)
 
+            # 🧪 Filter based on liquidity, market cap, volume, dex
             if dex not in VALID_DEX_IDS:
                 continue
             if liq < MIN_LIQ_USD or mcap < MIN_MCAP_USD or vol < MIN_VOL_USD:
                 continue
 
             base = item.get("baseToken", {})
-            raw_symbol = base.get("symbol", "")
-            symbol_with_dollar = f"${base.get('symbol', '').strip().lower()}"
+            symbol_raw = base.get("symbol", "")
+            symbol_with_dollar = f"${symbol_raw.strip().lower()}"
             is_believe = "DYN" in item.get("labels", [])
 
             if not is_valid_token_symbol(symbol_with_dollar):
-                logging.info(f"Skipping invalid symbol: {symbol_with_dollar}")
+                logging.info(f"[SKIP] Invalid symbol: {symbol_with_dollar}")
                 continue
             if symbol_with_dollar in seen_symbols:
                 continue
 
             seen_symbols.add(symbol_with_dollar)
+
             filtered_tokens.append({
                 "token_symbol": symbol_with_dollar,
                 "token_name": base.get("name", "Unknown"),
                 "address": base.get("address", "N/A"),
                 "volume_usd": vol,
-                "maker_count": None,
+                "maker_count": None, 
                 "liquidity_usd": liq,
                 "market_cap_usd": mcap,
                 "priceChange1h": item.get("priceChange", {}).get("h1", 0),
                 "is_believe": is_believe,
             })
 
-        logging.info(f"{len(filtered_tokens)} filtered tokens: {[t['token_symbol'] for t in filtered_tokens]}")
+        logging.info(f"[DONE] {len(filtered_tokens)} tokens passed filters: {[t['token_symbol'] for t in filtered_tokens]}")
         return filtered_tokens
 
 # ────────────────────────────────────────────
