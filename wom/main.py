@@ -23,15 +23,15 @@ logging.basicConfig(
 def make_loop(fn, interval_seconds):
     """Spawn a background task that runs `await fn()` every interval_seconds."""
     async def _loop():
-        logging.info(f"🔁 Loop started: {fn.__name__} every {interval_seconds}s")
+        logging.info(f"Loop started: {fn.__name__} every {interval_seconds}s")
         while True:
             start = datetime.now(timezone.utc)
             try:
                 await fn()
             except Exception as exc:
-                logging.error(f"[{fn.__name__}] ❌ Error: {exc}", exc_info=True)
+                logging.error(f"[{fn.__name__}] Error: {exc}", exc_info=True)
             elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-            logging.debug(f"[{fn.__name__}] ⏱️ Took {elapsed:.2f}s")
+            logging.debug(f"[{fn.__name__}] Took {elapsed:.2f}s")
             await asyncio.sleep(max(0, interval_seconds - elapsed))
     task = asyncio.create_task(_loop())
     
