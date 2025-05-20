@@ -29,7 +29,7 @@ def is_valid_token_symbol(symbol: str) -> bool:
     symbol_clean = symbol.lstrip("$").strip()
 
     # Must be at least 3 and at most 15 characters
-    if not (3 <= len(symbol_clean) <= 15):
+    if not (2 <= len(symbol_clean) <= 15):
         return False
 
     # Reject if it contains non-letters (no digits, symbols, emojis)
