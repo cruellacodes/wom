@@ -1,153 +1,146 @@
-# Word Of Mouth AI (WOM)
+# WOM - Word of Mouth Intelligence Engine
 
 [![Python](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
----
+**WOM** is an AI-powered analytics engine for extracting, processing, and scoring real-time social sentiment across newly launched crypto tokens. Designed to provide developers, analysts, and DeFi protocol operators with actionable intelligence on trending assets, WOM leverages a highly concurrent backend pipeline with deep integration into natural language sentiment modeling and dynamic scoring heuristics.
 
-## Overview
 
-**Word Of Mouth AI (WOM)** is a modular and scalable AI designed to assess the market sentiment of newly listed cryptocurrency tokens using real-time Twitter data. It combines data ingestion, parallel tweet fetching, transformer-based sentiment analysis, and frontend delivery.
+## ✶ Core Capabilities
 
----
+* **Token Discovery Layer**:
 
-## Token Fetching & Filtering
+  * Real-time ingestion of newly launched tokens
+  * Symbol sanitization and semantic validation to prevent noise from malformed, irrelevant, or spoofed pairs.
 
-Tokens are fetched from **Dex Screener**, which provides real-time listings of newly created liquidity pools across decentralized exchanges.
+* **Tweet Ingestion Pipeline**:
 
-To ensure quality and avoid spam tokens, the following **filters** are applied:
+  * Token-aware social scraping via a high-availability request layer with pagination, deduplication, and cursor-based traversal.
+  * Full-text tweet cleaning, timestamp parsing, and user quality scoring (based on follower counts, verified identities, etc).
 
-| Filter Criteria      | Description                                                           |
-|----------------------|-----------------------------------------------------------------------|
-| Age                  | Only tokens created within the last 48 hours are considered           |
-| Market Cap           | Super Low Market Caps excluded                                        |
-| Volume               | Filters out tokens with extremely low or suspicious volume            |
-| Liquidity            | Ensures that the token has some level of real liquidity               |
-| Maker Count          | Tokens with too few or suspicious makers are excluded                 |
-| Uniqueness / Validity| Duplicates, honeypots, or malformed data entries are skipped          |
+* **Sentiment Analysis Engine**:
 
-After this stage, a **filtered list of cashtags** is used as input to the tweet scraping pipeline.
+  * NLP-driven transformer classification over all relevant tweet content.
+  * Softmax post-processing, noise suppression, and weighted WOM scoring.
+  * Normalized per-tweet and per-token score aggregation using a time-weighted exponential decay function.
 
----
+* **Token Intelligence Layer**:
 
-## Concurrent Tweet Fetching with Round-Robin Assignment
+  * Composite score (WOM Score) generation via Bayesian smoothing over decayed tweet sentiment.
+  * Temporal pruning of stale tweets (older than 48h) and low-signal tokens (e.g. low liquidity, low market cap, low tweet velocity).
+  * Dynamic updates of each token’s tweet count and average sentiment in the core PostgreSQL store.
 
-- Tweets are fetched via **10 Apify workers** concurrently.
-- A [**round-robin scheduler**](https://en.wikipedia.org/wiki/Round-robin_scheduling) assigns each token to a task in a rotating fashion.
-- This ensures efficient distribution and concurrency without overloading any single worker.
+## ✶ Tweet Service Deep Dive
 
-### Round-Robin Assignment Example
+* Tweets are fetched for each token from a social feed using hashtag and cashtag semantics.
+* Each tweet is validated:
 
-- 10 workers, 25 tokens
-- Token 1 → Worker 1  
-  Token 2 → Worker 2  
-  …  
-  Token 10 → Worker 10  
-  Token 11 → Worker 1 again, and so on.
+  * Skips non-tweets and invalid user profiles.
+  * Parses timestamps to UTC, and drops tweets missing content.
+* Tweets are scored for relevance using a simple `is_relevant_tweet` utility that avoids spam and noise.
+* Tweets are then sent to an NLP classifier, which predicts bullish/neutral scores per tweet.
+* A WOM score per tweet is computed using a linear combination of softmax scores.
+* A final token-level WOM score is calculated with exponential decay + Bayesian smoothing.
+* Only tweets from the last 48 hours are kept to ensure recency.
 
----
 
-## Tweet Filtering
+## ✶ Scoring Breakdown
 
-Before sentiment analysis, collected tweets are pre-filtered to improve quality and reduce noise:
+**WOM Score** (0–100): A confidence-weighted metric representing token sentiment derived from recent social discourse.
 
-| Filter                            | Purpose                                             |
-|-----------------------------------|-----------------------------------------------------|
-| Language: English only            | Keeps model output consistent and accurate          |
-| Minimum length: > 3 words         | Removes noise, low-effort spam, or just emojis      |
-| Hashtag and emoji limits          | Excludes overly promotional or shill tweets         |
-| Minimum user followers            | Filters out posts from bot or inactive accounts     |
+* Final WOM = Bayesian average of weighted tweet scores, with decay based on tweet age.
+* Tweets older than 48 hours are deleted during score recalculation to maintain score fidelity.
 
----
 
-## Sentiment Analysis using CryptoBERT
+## ✶ Token Management
 
-### What is Sentiment Analysis?
+* **Storage**: New tokens are inserted or upserted into the database using `ON CONFLICT DO UPDATE` semantics.
+* **Activity Decay Rules**:
 
-Sentiment analysis is the NLP task of classifying a text’s emotional tone. In this case, we evaluate how optimistic or pessimistic a tweet is about a specific token.
+  * Tokens older than 3h with <20 total tweets are deactivated.
+  * Tokens older than 24h with <10 tweets in last 24h or low liquidity/volume are pruned.
+  * Inactive tokens older than 5 days are permanently deleted along with their tweets.
 
-### CryptoBERT Overview
 
-- A transformer-based model fine-tuned on **3.2 million crypto-related tweets**
-- Able to interpret slang, sarcasm, and crypto-native terminology
-- Outputs class logits → softmax probabilities → sentiment scores
+## ✶ Public API
 
-### Processing Pipeline
+### `GET /tokens`
 
-1. **Preprocessing** – Cleaning text, removing unwanted characters
-2. **Tokenization** – Preparing the tweet for model input
-3. **Model Inference** – Generating sentiment scores
-4. **Bullishness Extraction** – Extracting the positive class probability
-5. **Aggregation** – Average of all tweet scores per token → final score (%)
+Returns all stored tokens with optional pagination and `only_active` filter.
 
----
+### `GET /search-token/{token_address}`
 
-## Result Dispatch
+Search for real-time data about a token by address from DEX metadata.
 
-Once all tokens are processed:
+### `GET /tweets/{token_symbol}`
 
-- Sentiment data is stored in PostgreSQL 
-- An API layer exposes endpoints to the frontend
-- The frontend visualizes this data in real time
+Live-fetch tweet data for a token and return current sentiment + recent tweets.
 
----
+### `GET /stored-tweets?token_symbol=xyz`
 
-## Pipeline Diagram
+Query all tweets currently stored in the DB for a token.
 
-![Pipeline Diagram](architecture-diagram.png)
 
-*The diagram above illustrates the full data flow, including token filtering, round-robin tweet retrieval, sentiment analysis, and frontend API delivery.*
+## ✶ Security & Performance
 
----
+* Stateless service design (easily horizontally scalable)
 
-## API Endpoints
+* Pagination and cursor-based fetching to prevent rate abuse
 
-| Method | Route                            | Description                                |
-|--------|----------------------------------|--------------------------------------------|
-| GET    | `/tokens`                        | Retrieve all token sentiment summaries     |
-| GET    | `/tweets/{token_symbol}`         | Run live sentiment for a single token      |
-| GET    | `/stored-tweets/?token=XYZ`      | Retrieve stored tweet sentiment snapshots  |
-| GET    | `/tweet-volume/?token=XYZ`       | Get tweet count in last 6 hours            |
-| GET    | `/search-token/{chain}/{address}`| Lookup token via Dex Screener API          |
-| GET    | `/run-scheduled-job`             | Trigger pipeline execution                 |
+* TTL-based tweet cleanup to manage DB bloat
 
----
+* Retry + exponential backoff built into all external fetches
 
-## Frontend Integration
+* Auto-deactivation of low-performing tokens
 
-This project integrates with a frontend dashboard available here:  
-[**Frontend Repo: wom-fe**](https://github.com/cruellacodes/wom-fe)
+## ✶ Project Structure
 
-The frontend includes:
+wom/
+├── services/
+│   ├── token_service.py      # Token ingestion + filtering
+│   ├── tweet_service.py      # Tweet ingestion, scoring, storage
+├── models.py                 # DB schema (SQLAlchemy Core)
+├── db.py                     # Async DB session setup
+├── utils.py                  # Shared filters & text tools
+├── main.py                   # FastAPI entrypoint
+├── routers/
+│   ├── tokens.py             # Token endpoints
+│   ├── tweets.py             # Tweet endpoints
 
-- Radar chart for 6-hour tweet volume comparison
-- Podium-style ranking for top tokens by tweet count
-- Bar chart for top tokens by WOM Score
-- CA Search Bar 
-- Twitter Scatter Chart that displays tweets by token in the last 24h
-- Info Token Card
-- Leaderboard
-- Bubble Chart that displays tweets from Leaderboard tokens in the last 24h
+## ✶ Setup & Deployment
 
-The data is fetched directly from the backend API.
+### Environment Requirements
 
----
+* Python 3.11+
+* PostgreSQL 13+
+* Docker (recommended for deployment)
+* NVIDIA GPU (optional but recommended for faster inference)
 
-## Setup and Installation
-
-### Prerequisites
-
-- Python 3.7+
-- Environment variables:
-  - `APIFY_API_TOKEN`
-  - `TOKEN_ACTORS` (comma-separated list of 10 Apify tasks)
-  - `COOKIES` (optional)
-
-### Installation Steps
+### Install & Boot
 
 ```bash
-git clone https://github.com/cruellacodes/wom.git
-cd crypto-sentiment-analyzer
+git clone https://github.com/<your-org>/wom
+cd wom
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
+```
+
+Docker Setup
+
+```
+# Build image
+$ docker build -t wom-service .
+
+# Run container
+$ docker run -d -p 8000:8000 --env-file .env wom-service
+
+```
+
+## ✶ Final Notes
+
+This system is designed for scalability, resilience, and real-time sentiment intelligence. It is battle-tested to support bursty token activity, concurrent ingestion, and accurate low-latency updates.
+
+For advanced use cases such as alerting, price/sentiment correlation, or custom dashboards, integration with Kafka or Redis Streams is supported (WIP).
+
+For contributions, fork the repo and submit a PR. For production deployment, containerization via Docker or Kubernetes is recommended for load-balanced environments.
