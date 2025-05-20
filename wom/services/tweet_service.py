@@ -7,11 +7,10 @@ import pytz # type: ignore
 from dotenv import load_dotenv # type: ignore
 from datetime import datetime, timedelta, timezone
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TextClassificationPipeline
-from sqlalchemy.dialects.postgresql import insert, delete # type: ignore
+from sqlalchemy.dialects.postgresql import insert # type: ignore
+from sqlalchemy import delete  # type: ignore
 import math
 import re
-import traceback
-import random
 
 from db import database
 from models import tokens, tweets
