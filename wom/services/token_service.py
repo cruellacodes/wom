@@ -25,18 +25,20 @@ if not api_token:
 # ────────────────────────────────────────────
 
 # -- Helper to validate token symbols --
+import unicodedata
+
 def is_valid_token_symbol(symbol: str) -> bool:
     symbol_clean = symbol.lstrip("$").strip()
 
-    # Must be at least 3 and at most 15 characters
+    # Allow symbols that are 2 to 15 characters
     if not (2 <= len(symbol_clean) <= 15):
         return False
 
-    # Reject if it contains non-letters (no digits, symbols, emojis)
+    # Allow only alphabetic characters
     if not symbol_clean.isalpha():
         return False
 
-    # Extra check for unicode symbols like emojis
+    # Reject emojis or special unicode symbols
     for char in symbol_clean:
         if unicodedata.category(char).startswith("So"):
             return False
@@ -66,14 +68,22 @@ MIN_VOL_USD = 150_000
 
 # -- Helper to validate token symbols --
 def is_valid_token_symbol(symbol: str) -> bool:
+    # Remove $ only if present
     symbol_clean = symbol.lstrip("$").strip()
-    if not (3 <= len(symbol_clean) <= 15):
+
+    # Length must be 2–15
+    if not (2 <= len(symbol_clean) <= 15):
         return False
+
+    # Must be all letters (A–Z, case-insensitive)
     if not symbol_clean.isalpha():
         return False
+
+    # Reject emoji/symbols
     for char in symbol_clean:
         if unicodedata.category(char).startswith("So"):
             return False
+
     return True
 
 # -- Main function to get filtered tokens --
@@ -121,16 +131,19 @@ async def get_filtered_pairs():
                 continue
 
             base = item.get("baseToken", {})
-            symbol_raw = base.get("symbol", "")
+            symbol_raw = base.get("symbol", "").strip()
             symbol_with_dollar = f"${symbol_raw.strip().lower()}"
-            is_believe = "DYN" in item.get("labels", [])
+            symbol_clean = symbol_raw.lstrip("$").strip()
 
-            if not is_valid_token_symbol(symbol_with_dollar):
-                logging.info(f"[SKIP] Invalid symbol: {symbol_with_dollar}")
+            if not is_valid_token_symbol(symbol_clean):
+                logging.info(f"[SKIP] Invalid symbol: ${symbol_clean.lower()}")
                 continue
+
+            symbol_with_dollar = f"${symbol_clean.lower()}"
             if symbol_with_dollar in seen_symbols:
                 continue
 
+            is_believe = "DYN" in item.get("labels", [])
             seen_symbols.add(symbol_with_dollar)
             pair_created_at = item.get("pairCreatedAt")
             age_string = format_token_age(pair_created_at) if pair_created_at else "N/A"

@@ -30,11 +30,15 @@ pipe = TextClassificationPipeline(model=model, tokenizer=tokenizer, top_k=None)
 
 # === Tweet Fetching ===
 
+# Global semaphore to limit concurrent requests (10 RPS)
+RATE_LIMIT = 10
+semaphore = asyncio.Semaphore(RATE_LIMIT)
+
 async def fetch_active_tokens():
     rows = await database.fetch_all(tokens.select().where(tokens.c.is_active == True))
     return [row["token_symbol"] for row in rows]
 
-async def fetch_tweets_from_rapidapi(token_symbol, cursor=None):
+async def fetch_tweets_from_rapidapi(token_symbol, cursor=None, retries=3):
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
     rapidapi_host = os.getenv("RAPIDAPI_HOST")
 
@@ -57,71 +61,82 @@ async def fetch_tweets_from_rapidapi(token_symbol, cursor=None):
         "count": "20",
         "query": query
     }
-
     if cursor:
         params["cursor"] = cursor
 
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, headers=headers, params=params, timeout=10.0)
-            response.raise_for_status()
-            data = response.json()
+    delay = 1  # initial delay for retries
 
-            instructions = data.get("result", {}).get("timeline", {}).get("instructions", [])
-            entries = []
-            for instr in instructions:
-                if instr.get("type") == "TimelineAddEntries":
-                    entries.extend(instr.get("entries", []))
+    for _ in range(retries):
+        async with semaphore:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(url, headers=headers, params=params)
+                    if response.status_code == 429:
+                        logging.warning(f"[429] Rate limited on {token_symbol}, retrying in {delay}s...")
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
 
-            tweets = []
-            next_cursor = None
+                    response.raise_for_status()
+                    data = response.json()
 
-            for entry in entries:
-                content = entry.get("content", {})
+                    instructions = data.get("result", {}).get("timeline", {}).get("instructions", [])
+                    entries = []
+                    for instr in instructions:
+                        if instr.get("type") == "TimelineAddEntries":
+                            entries.extend(instr.get("entries", []))
 
-                # Grab bottom cursor for pagination
-                if content.get("entryType") == "TimelineTimelineCursor" and content.get("cursorType") == "Bottom":
-                    next_cursor = content.get("value")
-                    continue
+                    tweets = []
+                    next_cursor = None
 
-                item = content.get("itemContent", {})
-                tweet_result = item.get("tweet_results", {}).get("result", {})
-                legacy = tweet_result.get("legacy", {})
-                user = (
-                    tweet_result.get("core", {})
-                    .get("user_results", {})
-                    .get("result", {})
-                    .get("legacy", {})
-                )
+                    for entry in entries:
+                        content = entry.get("content", {})
 
-                if not legacy or not user:
-                    continue
+                        if content.get("entryType") == "TimelineTimelineCursor" and content.get("cursorType") == "Bottom":
+                            next_cursor = content.get("value")
+                            continue
 
-                tweets.append({
-                    "tweet_id": legacy.get("id_str"),
-                    "text": legacy.get("full_text"),
-                    "created_at": legacy.get("created_at"),
-                    "user_info": {
-                        "screen_name": user.get("screen_name"),
-                        "followers_count": user.get("followers_count", 0),
-                        "avatar": user.get("profile_image_url_https", "")
-                    },
-                    "type": "tweet"
-                })
+                        item = content.get("itemContent", {})
+                        tweet_result = item.get("tweet_results", {}).get("result", {})
+                        legacy = tweet_result.get("legacy", {})
+                        user = (
+                            tweet_result.get("core", {})
+                            .get("user_results", {})
+                            .get("result", {})
+                            .get("legacy", {})
+                        )
 
-            if not tweets:
-                logging.info(f"No tweets found on RapidAPI for {token_symbol}")
-            return tweets, next_cursor
+                        if not legacy or not user:
+                            continue
 
-        except httpx.HTTPStatusError as e:
-            logging.error(f"RapidAPI HTTP error for {token_symbol}: {e.response.status_code}")
-        except httpx.RequestError as e:
-            logging.warning(f"RapidAPI request error for {token_symbol}: {e}")
-        except Exception as e:
-            logging.error(f"RapidAPI unknown error for {token_symbol}: {e}")
-        return [], None
-    
+                        tweets.append({
+                            "tweet_id": legacy.get("id_str"),
+                            "text": legacy.get("full_text"),
+                            "created_at": legacy.get("created_at"),
+                            "user_info": {
+                                "screen_name": user.get("screen_name"),
+                                "followers_count": user.get("followers_count", 0),
+                                "avatar": user.get("profile_image_url_https", "")
+                            },
+                            "type": "tweet"
+                        })
 
+                    if not tweets:
+                        logging.info(f"No tweets found on RapidAPI for {token_symbol}")
+                    return tweets, next_cursor
+
+            except httpx.HTTPStatusError as e:
+                logging.error(f"RapidAPI HTTP error for {token_symbol}: {e.response.status_code}")
+            except httpx.RequestError as e:
+                logging.warning(f"RapidAPI request error for {token_symbol}: {e}")
+            except Exception as e:
+                logging.error(f"RapidAPI unknown error for {token_symbol}: {e}")
+        
+        await asyncio.sleep(delay)
+        delay *= 2  # exponential backoff
+
+    logging.error(f"[FAILED] After {retries} retries for {token_symbol}")
+    return [], None
 
 # === Preprocess ===
 
