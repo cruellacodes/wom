@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException # type: ignore
-from services.tweet_service import fetch_stored_tweets, fetch_and_analyze, fetch_tweet_volume_buckets
+from services.tweet_service import fetch_last_48h_tweets, fetch_stored_tweets
 import logging
 
 tweets_router = APIRouter()
@@ -19,7 +19,7 @@ async def get_stored_tweets_endpoint(token_symbol: str = Query(...)):
 @tweets_router.get("/tweets/{token_symbol}")
 async def get_tweets(token_symbol: str):
     try:
-        tweets_data = await fetch_and_analyze(token_symbol)
+        tweets_data = await fetch_last_48h_tweets(token_symbol)
         return {
             "token_symbol": token_symbol,
             "tweets": tweets_data.get("tweets", []),
