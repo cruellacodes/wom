@@ -7,8 +7,7 @@ import pytz # type: ignore
 from dotenv import load_dotenv # type: ignore
 from datetime import datetime, timedelta, timezone
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TextClassificationPipeline
-from sqlalchemy.dialects.postgresql import insert # type: ignore
-from sqlalchemy import select # type: ignore
+from sqlalchemy.dialects.postgresql import insert, delete # type: ignore
 import math
 import re
 import traceback
@@ -301,64 +300,49 @@ async def fetch_stored_tweets(token):
 # === One-token workflow ===
 
 async def fetch_and_analyze(token_symbol: str):
-    try:
-        # 1. Check token exists
-        exists_query = select(tokens.c.token_symbol).where(tokens.c.token_symbol == token_symbol.lower())
-        exists = await database.fetch_one(exists_query)
-        if not exists:
-            logging.warning(f"Skipping {token_symbol}: not in DB.")
-            return
+    # 1. Sanity check token
+    exists = await database.fetch_one(...)
+    if not exists:
+        return
 
-        # 2. Fetch tweets in last 48h using cursor
-        recent_tweets_data = await fetch_last_48h_tweets(token_symbol)
-        raw_tweets = recent_tweets_data.get(token_symbol, {}).get("tweets", [])
-        if not raw_tweets:
-            logging.info(f"[{token_symbol}] No recent tweets in last 48h.")
-            return
+    # 2. Fetch tweets in last 48h (raw only)
+    new_raw = await fetch_last_48h_tweets(token_symbol)
 
-        # 3. Preprocess
-        processed_dict = await preprocess_tweets(raw_tweets, token_symbol)
-        processed = processed_dict.get(token_symbol, [])
-        if not processed:
-            logging.info(f"[{token_symbol}] All tweets were filtered out.")
-            return
+    # 3. Preprocess
+    processed_dict = await preprocess_tweets(new_raw, token_symbol)
+    tweets = processed_dict.get(token_symbol, [])
+    if not tweets:
+        return
 
-        # 4. Sentiment analysis
-        sentiment_dict = await get_sentiment({token_symbol: processed})
-        sentiment = sentiment_dict.get(token_symbol, {})
+    # 4. Sentiment
+    sentiment_result = await get_sentiment({token_symbol: tweets})
+    scored = sentiment_result.get(token_symbol, {}).get("tweets", [])
 
-        # 5. Store tweets (skip existing via ON CONFLICT)
-        if sentiment.get("tweets"):
-            await store_tweets(token_symbol, sentiment["tweets"])
+    # 5. Deduplicate
+    existing_ids = set(
+        t["tweet_id"] for t in await fetch_stored_tweets(token_symbol)
+    )
+    new_tweets = [t for t in scored if t["tweet_id"] not in existing_ids]
 
-        # 6. Delete tweets older than 48h
-        delete_stmt = tweets.delete().where(
+    # 6. Store only new tweets
+    await store_tweets(token_symbol, new_tweets)
+
+    # 7. Prune old tweets (>48h)
+    delete_stmt = delete(tweets).where(
             (tweets.c.token_symbol == token_symbol.lower()) &
             (tweets.c.created_at < datetime.now(timezone.utc) - timedelta(hours=48))
         )
-        await database.execute(delete_stmt)
+    await database.execute(delete_stmt)
 
-        # 7. Fetch remaining tweets (within 48h) for WOM score
-        stored = await fetch_stored_tweets(token_symbol)
-        fresh = [
-            t for t in stored
-            if t["wom_score"] is not None and t["created_at"] is not None
-        ]
+    # 8. Fetch remaining tweets for this token
+    stored = await fetch_stored_tweets(token_symbol)
+    fresh = [t for t in stored if t["created_at"] and t["wom_score"] is not None]
 
-        if not fresh:
-            logging.info(f"[{token_symbol}] No tweets left after pruning.")
-            await update_token_table(token_symbol, wom_score=0.0, count=0)
-            return
+    # 9. Final WOM score
+    final_score = compute_final_wom_score(fresh)
+    await update_token_table(token_symbol, final_score, len(fresh))
 
-        # 8. Final WOM score
-        final_score = compute_final_wom_score(fresh)
-        await update_token_table(token_symbol, final_score, len(fresh))
-
-        logging.info(f"[{token_symbol}] WOM={final_score} from {len(fresh)} tweets.")
-
-    except Exception as e:
-        logging.error(f"Exception in fetch_and_analyze({token_symbol}): {e}")
-        traceback.print_exc()
+    logging.info(f"[{token_symbol}] WOM={final_score} from {len(fresh)} tweets.")
 
 def compute_final_wom_score(tweets):
     """Compute final WOM score using time decay and scaling."""
@@ -402,6 +386,13 @@ def compute_final_wom_score(tweets):
 TWEET_TIME_WINDOW_HOURS = 48
 MAX_FETCH_PAGES = 5  # prevent infinite loops
 
+def try_parse_twitter_time(ts):
+    try:
+        return datetime.strptime(ts, "%a %b %d %H:%M:%S %z %Y").astimezone(timezone.utc)
+    except Exception:
+        logging.warning(f"[Parser] Invalid tweet time format: {ts}")
+        return None
+
 async def fetch_last_48h_tweets(token_symbol: str):
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=TWEET_TIME_WINDOW_HOURS)
@@ -419,16 +410,12 @@ async def fetch_last_48h_tweets(token_symbol: str):
         # Filter by timestamp
         filtered = []
         for tweet in raw_batch:
-            created_str = tweet.get("created_at")
-            if not created_str:
-                continue
-            try:
-                created_at = datetime.strptime(created_str, "%a %b %d %H:%M:%S %z %Y")
-                created_at = created_at.astimezone(timezone.utc)
-            except Exception:
+            created_at = try_parse_twitter_time(tweet.get("created_at"))
+            if not created_at:
                 continue
 
             if created_at >= start_time and tweet["tweet_id"] not in seen_ids:
+                tweet["created_at"] = created_at.isoformat()
                 filtered.append(tweet)
                 seen_ids.add(tweet["tweet_id"])
 
@@ -437,11 +424,8 @@ async def fetch_last_48h_tweets(token_symbol: str):
 
         all_tweets.extend(filtered)
 
-        # Stop if oldest is outside the 48h range
-        oldest = min(
-            datetime.strptime(t["created_at"], "%a %b %d %H:%M:%S %z %Y").astimezone(timezone.utc)
-            for t in filtered
-        )
+        # Stop if the oldest tweet is outside the 48h window
+        oldest = min(try_parse_twitter_time(t["created_at"]) for t in filtered if t.get("created_at"))
         if oldest < start_time:
             break
 
@@ -450,48 +434,7 @@ async def fetch_last_48h_tweets(token_symbol: str):
             break
         pages += 1
 
-    if not all_tweets:
-        return {token_symbol: {
-            "wom_score": 0.0,
-            "tweet_count": 0,
-            "tweets": []
-        }}
-
-    # Preprocess
-    processed_dict = await preprocess_tweets(all_tweets, token_symbol)
-    tweets = processed_dict.get(token_symbol, [])
-
-    if not tweets:
-        return {token_symbol: {
-            "wom_score": 0.0,
-            "tweet_count": 0,
-            "tweets": []
-        }}
-
-    # Sentiment
-    sentiment_result = await get_sentiment({token_symbol: tweets})
-    result = sentiment_result.get(token_symbol)
-
-    if not result:
-        return {token_symbol: {
-            "wom_score": 0.0,
-            "tweet_count": len(tweets),
-            "tweets": tweets
-        }}
-
-    # Final WOM score with time decay
-    final_score = compute_final_wom_score([
-        {
-            "created_at": t["created_at"],
-            "wom_score": t["wom_score"]
-        }
-        for t in result["tweets"]
-    ])
-
-    return {token_symbol: {
-        "wom_score": final_score,
-        "tweets": result["tweets"]
-    }}
+    return all_tweets
 
 # === Run for all active tokens ===
 
