@@ -341,10 +341,9 @@ async def fetch_tokens_from_db():
 DEX_PROXY_URL = os.getenv("DEX_PROXY_URL")
 DEX_PROXY_SECRET = os.getenv("DEX_PROXY_SECRET")
 
-async def fetch_token_info_by_address(pair_id: str, chain_id: str = "solana") -> dict | None:
+async def fetch_token_info_by_address(token_address: str, chain_id: str = "solana") -> dict | None:
     params = {
-        "pair": pair_id,
-        "chain": chain_id,
+        "tokenAddresses": token_address,
     }
 
     headers = {
@@ -353,13 +352,16 @@ async def fetch_token_info_by_address(pair_id: str, chain_id: str = "solana") ->
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(DEX_PROXY_URL, params=params, headers=headers)
+            response = await client.get(
+                f"{DEX_PROXY_URL}/tokens/v1/{chain_id}/{token_address}",
+                headers=headers
+            )
             response.raise_for_status()
             data = response.json()
             if isinstance(data, list) and data:
                 return data[0]
         except Exception as e:
-            logging.error(f"Failed to fetch token info for {pair_id}: {e}")
+            logging.error(f"Failed to fetch token info for {token_address}: {e}")
             return None
 
 MAX_CONCURRENT_REQUESTS = 10  # Control concurrency (tune based on your API limit)
