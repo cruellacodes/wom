@@ -377,12 +377,21 @@ TWEET_TIME_WINDOW_HOURS = 48
 MAX_FETCH_PAGES = 5  # prevent infinite loops
 
 def normalize_created_at(raw_time: str) -> str | None:
+    if not raw_time:
+        return None
     try:
+        # Case 1: Already in ISO format
+        return datetime.fromisoformat(raw_time).astimezone(timezone.utc).isoformat()
+    except ValueError:
+        pass
+    try:
+        # Case 2: Twitter classic format
         dt = datetime.strptime(raw_time, "%a %b %d %H:%M:%S %z %Y")
         return dt.astimezone(timezone.utc).isoformat()
     except Exception:
         logging.warning(f"[Parser] Invalid tweet time format in preprocess: {raw_time}")
         return None
+
 
 
 def try_parse_twitter_time(ts: str) -> datetime | None:
