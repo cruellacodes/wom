@@ -242,12 +242,11 @@ async def store_tweets(token: str, tweets_list: list[dict]) -> None:
     """
 
     if not tweets_list:
-        return  # nothing to do
+        return
 
-    token_lc = token.lower() 
+    token_lc = token.lower()
 
     def _transform(tweet: dict):
-        """Return a row-dict or None if parsing fails / field missing."""
         try:
             dt = datetime.fromisoformat(tweet["created_at"])
         except Exception:
@@ -270,12 +269,19 @@ async def store_tweets(token: str, tweets_list: list[dict]) -> None:
     rows = [r for r in rows if r is not None]
 
     if not rows:
-        return  # every row failed validation
+        return
 
-    stmt = insert(tweets).on_conflict_do_nothing(index_elements=["tweet_id"])
-    await database.execute_many(stmt, rows)
+    query = """
+        INSERT INTO tweets (
+            tweet_id, token_symbol, text, user_name, followers_count, profile_pic, created_at, wom_score, tweet_url
+        )
+        VALUES (
+            :tweet_id, :token_symbol, :text, :user_name, :followers_count, :profile_pic, :created_at, :wom_score, :tweet_url
+        )
+        ON CONFLICT (tweet_id) DO NOTHING
+    """
 
-
+    await database.execute_many(query=query, values=rows)
 
 async def update_token_table(token, wom_score, count):
     stmt = tokens.update().where(
