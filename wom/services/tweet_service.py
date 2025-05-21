@@ -150,8 +150,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
         user = tweet.get("user_info", {})
         try:
-            dt = datetime.fromisoformat(tweet["created_at"])
-            created_at = dt.astimezone(timezone.utc).isoformat()
+            created_at = normalize_created_at(tweet["created_at"])
         except Exception:
             created_at = None
 
@@ -242,19 +241,22 @@ async def store_tweets(token: str, tweets_list: list[dict]) -> None:
         so we don’t do try/except work twice.
     """
 
+    if not tweets_list:
+        return  # nothing to do
+
+    token_lc = token.lower() 
+
     def _transform(tweet: dict):
         """Return a row-dict or None if parsing fails / field missing."""
         try:
-            # ISO-8601 strings coming back from preprocess_tweets()
             dt = datetime.fromisoformat(tweet["created_at"])
-            if dt.tzinfo is None:               # tolerate naïve datetimes
-                dt = dt.replace(tzinfo=timezone.utc)
         except Exception:
+            logging.warning(f"[Storage] Invalid ISO timestamp: {tweet['created_at']}")
             return None
 
         return {
             "tweet_id":        tweet["tweet_id"],
-            "token_symbol":    token_lc,              # use cached lowercase
+            "token_symbol":    token_lc,
             "text":            tweet["text"],
             "user_name":       tweet["user_name"],
             "followers_count": tweet["followers_count"],
@@ -264,12 +266,6 @@ async def store_tweets(token: str, tweets_list: list[dict]) -> None:
             "tweet_url":       tweet["tweet_url"],
         }
 
-    if not tweets_list:                 # nothing to do
-        return
-
-    token_lc = token.lower()
-
-    # build rows, silently dropping any that fail _transform()
     rows = [_transform(t) for t in tweets_list]
     rows = [r for r in rows if r is not None]
 
@@ -278,6 +274,7 @@ async def store_tweets(token: str, tweets_list: list[dict]) -> None:
 
     stmt = insert(tweets).on_conflict_do_nothing(index_elements=["tweet_id"])
     await database.execute_many(stmt, rows)
+
 
 
 async def update_token_table(token, wom_score, count):
@@ -379,12 +376,30 @@ def compute_final_wom_score(tweets):
 TWEET_TIME_WINDOW_HOURS = 48
 MAX_FETCH_PAGES = 5  # prevent infinite loops
 
-def try_parse_twitter_time(ts):
+def normalize_created_at(raw_time: str) -> str | None:
     try:
+        dt = datetime.strptime(raw_time, "%a %b %d %H:%M:%S %z %Y")
+        return dt.astimezone(timezone.utc).isoformat()
+    except Exception:
+        logging.warning(f"[Parser] Invalid tweet time format in preprocess: {raw_time}")
+        return None
+
+
+def try_parse_twitter_time(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        # Case 1: ISO-8601 (already processed earlier)
+        return datetime.fromisoformat(ts).astimezone(timezone.utc)
+    except ValueError:
+        pass
+    try:
+        # Case 2: Twitter classic format
         return datetime.strptime(ts, "%a %b %d %H:%M:%S %z %Y").astimezone(timezone.utc)
     except Exception:
         logging.warning(f"[Parser] Invalid tweet time format: {ts}")
         return None
+
 
 async def fetch_last_48h_tweets(token_symbol: str):
     end_time = datetime.now(timezone.utc)
