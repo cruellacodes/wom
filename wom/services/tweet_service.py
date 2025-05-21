@@ -299,45 +299,40 @@ async def fetch_stored_tweets(token):
 # === One-token workflow ===
 
 async def fetch_and_analyze(token_symbol: str):
-    # 1. Sanity check token
-    exists = await database.fetch_one(...)
-    if not exists:
-        return
-
-    # 2. Fetch tweets in last 48h (raw only)
+    # 1. Fetch tweets in last 48h (raw only)
     new_raw = await fetch_last_48h_tweets(token_symbol)
 
-    # 3. Preprocess
+    # 2. Preprocess
     processed_dict = await preprocess_tweets(new_raw, token_symbol)
     tweets = processed_dict.get(token_symbol, [])
     if not tweets:
         return
 
-    # 4. Sentiment
+    # 3. Sentiment
     sentiment_result = await get_sentiment({token_symbol: tweets})
     scored = sentiment_result.get(token_symbol, {}).get("tweets", [])
 
-    # 5. Deduplicate
+    # 4. Deduplicate
     existing_ids = set(
         t["tweet_id"] for t in await fetch_stored_tweets(token_symbol)
     )
     new_tweets = [t for t in scored if t["tweet_id"] not in existing_ids]
 
-    # 6. Store only new tweets
+    # 5. Store only new tweets
     await store_tweets(token_symbol, new_tweets)
 
-    # 7. Prune old tweets (>48h)
+    # 6. Prune old tweets (>48h)
     delete_stmt = delete(tweets).where(
             (tweets.c.token_symbol == token_symbol.lower()) &
             (tweets.c.created_at < datetime.now(timezone.utc) - timedelta(hours=48))
         )
     await database.execute(delete_stmt)
 
-    # 8. Fetch remaining tweets for this token
+    # 7. Fetch remaining tweets for this token
     stored = await fetch_stored_tweets(token_symbol)
     fresh = [t for t in stored if t["created_at"] and t["wom_score"] is not None]
 
-    # 9. Final WOM score
+    # 8. Final WOM score
     final_score = compute_final_wom_score(fresh)
     await update_token_table(token_symbol, final_score, len(fresh))
 
