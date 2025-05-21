@@ -3,7 +3,6 @@ from asyncio.log import logger
 import os
 import httpx # type: ignore
 import logging
-import pytz # type: ignore
 from dotenv import load_dotenv # type: ignore
 from datetime import datetime, timedelta, timezone
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TextClassificationPipeline
@@ -151,8 +150,8 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
         user = tweet.get("user_info", {})
         try:
-            dt = datetime.strptime(tweet.get("created_at", ""), "%a %b %d %H:%M:%S %z %Y")
-            created_at = dt.astimezone(pytz.utc).isoformat()
+            dt = datetime.fromisoformat(tweet["created_at"])
+            created_at = dt.astimezone(timezone.utc).isoformat()
         except Exception:
             created_at = None
 
@@ -382,7 +381,7 @@ MAX_FETCH_PAGES = 5  # prevent infinite loops
 
 def try_parse_twitter_time(ts):
     try:
-        return datetime.strptime(ts, "%a %b %d %H:%M:%S %z %Y").astimezone(timezone.utc)
+        return datetime.fromisoformat(ts).astimezone(timezone.utc)
     except Exception:
         logging.warning(f"[Parser] Invalid tweet time format: {ts}")
         return None
