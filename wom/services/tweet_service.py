@@ -381,7 +381,7 @@ MAX_FETCH_PAGES = 5  # prevent infinite loops
 
 def try_parse_twitter_time(ts):
     try:
-        return datetime.fromisoformat(ts).astimezone(timezone.utc)
+        return datetime.strptime(ts, "%a %b %d %H:%M:%S %z %Y").astimezone(timezone.utc)
     except Exception:
         logging.warning(f"[Parser] Invalid tweet time format: {ts}")
         return None
