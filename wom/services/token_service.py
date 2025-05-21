@@ -366,8 +366,9 @@ async def fetch_token_info_by_address(token_address: str, chain_id: str = "solan
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
-                f"{DEX_PROXY_URL}/tokens/v1/{chain_id}/{token_address}",
-                headers=headers
+                f"{DEX_PROXY_URL}/tokens/v1/{chain_id}",
+                headers=headers,
+                params=params
             )
             response.raise_for_status()
             data = response.json()
