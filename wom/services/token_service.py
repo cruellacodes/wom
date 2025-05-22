@@ -10,6 +10,7 @@ from models import tokens, tweets
 import unicodedata
 import logging
 import asyncio
+import re
 
 # Logging setup
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -215,20 +216,30 @@ async def store_tokens(tokens_data):
     logging.info(f"Stored/Updated {len(tokens_data)} tokens.")
 
 def parse_age_to_hours(age_str: str) -> float:
-    """Parses '6h', '2d' style age strings into float hours."""
+    """Parses age strings like '6h', '2d', '<1h' into float hours.
+    Returns 0.0 for '<1h' or any unparseable value to skip deactivation."""
     if not age_str:
         return 0.0
+
     try:
-        if age_str.endswith("h"):
-            return float(age_str[:-1])
-        elif age_str.endswith("d"):
-            return float(age_str[:-1]) * 24
-        else:
-            logging.warning(f"Unknown age format: {age_str}")
+        # Explicitly skip "<1h" and similar
+        if age_str.startswith("<"):
             return 0.0
+
+        # Match patterns like '6h', '2d', '1.5d'
+        match = re.match(r"(\d+\.?\d*)([hd])", age_str)
+        if match:
+            value, unit = match.groups()
+            value = float(value)
+            return value if unit == "h" else value * 24
+
+        logging.warning(f"Unknown age format: {age_str}")
+        return 0.0
+
     except ValueError:
         logging.warning(f"Invalid age value: {age_str}")
         return 0.0
+
 
 async def deactivate_low_activity_tokens():
     now = datetime.now(timezone.utc)
@@ -250,7 +261,7 @@ async def deactivate_low_activity_tokens():
     active_tokens_query = select([
         tokens.c.token_symbol,
         tokens.c.address,
-        tokens.c.age,  # 👈 must exist in your tokens table
+        tokens.c.age,  
         tokens.c.tweet_count,
         tokens.c.volume_usd,
         tokens.c.market_cap_usd 
