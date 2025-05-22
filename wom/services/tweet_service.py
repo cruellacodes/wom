@@ -186,7 +186,6 @@ async def analyze_sentiment(text):
 
     try:
         predictions = pipe(text)[0]
-        print(f"[Sentiment Debug] Text: {text} → Predictions: {predictions}")
         
         # use string labels 
         scores = {pred["label"].lower(): pred["score"] for pred in predictions}

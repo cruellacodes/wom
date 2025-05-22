@@ -240,6 +240,7 @@ def parse_age_to_hours(age_str: str) -> float:
         logging.warning(f"Invalid age value: {age_str}")
         return 0.0
 
+GRACE_PERIOD = timedelta(minutes=30)
 
 async def deactivate_low_activity_tokens():
     now = datetime.now(timezone.utc)
@@ -264,7 +265,8 @@ async def deactivate_low_activity_tokens():
         tokens.c.age,  
         tokens.c.tweet_count,
         tokens.c.volume_usd,
-        tokens.c.market_cap_usd 
+        tokens.c.market_cap_usd,
+        tokens.c.created_at  # ← Add this
     ]).where(tokens.c.is_active == True)
     tokens_data = await database.fetch_all(active_tokens_query)
 
@@ -273,6 +275,12 @@ async def deactivate_low_activity_tokens():
 
     for token in tokens_data:
         symbol = token["token_symbol"]
+        created_at = token["created_at"]
+
+        # ─── Grace Period Check ───
+        if (now - created_at) < GRACE_PERIOD:
+            continue  # Give token time to accumulate tweets
+
         age_str = token["age"]
         tweet_count_total = token["tweet_count"]
         tweet_count_24h = tweet_count_map.get(symbol, 0)
@@ -285,22 +293,18 @@ async def deactivate_low_activity_tokens():
         # Deactivation Rules:
         # ────────────────────────────────────────────
 
-        # Rule 1: Created more than 3h ago AND tweet_count < 20
         if age_hours > 3 and tweet_count_total < 20:
             tokens_to_deactivate.append(symbol)
             continue
 
-        # Rule 2: Created more than 24h ago AND volume < $200k
         if age_hours > 24 and volume < 200_000:
             tokens_to_deactivate.append(symbol)
             continue
 
-        # Rule 3: Created more than 23h ago AND < 10 tweets in last 24h
         if age_hours > 23 and tweet_count_24h < 10:
             tokens_to_deactivate.append(symbol)
             continue
 
-        # Rule 4: Market cap less than $40k
         if market_cap < 40_000:
             tokens_to_deactivate.append(symbol)
             continue
