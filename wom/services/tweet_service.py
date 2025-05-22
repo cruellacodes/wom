@@ -344,42 +344,35 @@ async def recalculate_token_scores():
         await update_token_table(token, final_score, len(recent))
         logging.info(f"[{token}] WOM={final_score} from {len(recent)} tweets.")
 
-def compute_final_wom_score(tweets):
-    """Compute final WOM score using time decay and scaling."""
+def compute_final_wom_score(tweets: list[dict]) -> float:
+    """
+    Compute the final WOM score for a list of tweets using exponential decay
+    and Bayesian smoothing. Assumes all tweets have:
+    - 'created_at' as timezone-aware datetime
+    - 'wom_score' as a float
+    """
     if not tweets:
         return 1.0
 
     now = datetime.now(timezone.utc)
-    decay_constant = 12  # Decay in hours
-    weighted_sum = 0.0
-    total_weight = 0.0
+    decay_hours = 12  # half-life
+    weight_sum = 0.0
+    score_sum = 0.0
 
     for tweet in tweets:
-        created_at = tweet["created_at"]
-        if isinstance(created_at, str):
-            created_at = datetime.fromisoformat(created_at)
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
+        age_hours = (now - tweet["created_at"]).total_seconds() / 3600
+        weight = math.exp(-age_hours / decay_hours)
+        score_sum += tweet["wom_score"] * weight
+        weight_sum += weight
 
-        wom_score = tweet["wom_score"] or 0
-        age_hours = (now - created_at).total_seconds() / 3600
-        weight = math.exp(-age_hours / decay_constant)
+    avg_score = score_sum / weight_sum if weight_sum else 50.0
 
-        weighted_sum += wom_score * weight
-        total_weight += weight
+    # Bayesian smoothing (adjust constants based on data scale)
+    prior = 50.0  # neutral baseline
+    confidence = 15  # how many tweets to "trust" the score
 
-    if total_weight == 0:
-        return 0.0
-
-    average_score = weighted_sum / total_weight if total_weight else 1.0
-
-    # Bayesian smoothing
-    global_avg = 50.0    # mid-range confidence score (adjust based on observed averages)
-    confidence = 15      # number of tweets needed to fully "trust" the score
-
-    final_score = ((confidence * global_avg) + (len(tweets) * average_score)) / (confidence + len(tweets))
-    return round(final_score, 2)
-
+    smoothed = ((confidence * prior) + (len(tweets) * avg_score)) / (confidence + len(tweets))
+    return round(smoothed, 2)
 
 # === Stateless fetching ===
 
