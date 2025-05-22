@@ -214,13 +214,22 @@ async def store_tokens(tokens_data):
 
     logging.info(f"Stored/Updated {len(tokens_data)} tokens.")
 
-# ────────────────────────────────────────────
-# Deactivation of active Tokens:
-# - Created more than 3 hours ago AND total tweet_count < 20
-# - Created more than 24 hours ago AND volume_usd < 200,000
-# - Created more than 23 hours ago AND fewer than 10 tweets in the last 24h
-# - Market cap is less than 40,000
-# ────────────────────────────────────────────
+def parse_age_to_hours(age_str: str) -> float:
+    """Parses '6h', '2d' style age strings into float hours."""
+    if not age_str:
+        return 0.0
+    try:
+        if age_str.endswith("h"):
+            return float(age_str[:-1])
+        elif age_str.endswith("d"):
+            return float(age_str[:-1]) * 24
+        else:
+            logging.warning(f"Unknown age format: {age_str}")
+            return 0.0
+    except ValueError:
+        logging.warning(f"Invalid age value: {age_str}")
+        return 0.0
+
 async def deactivate_low_activity_tokens():
     now = datetime.now(timezone.utc)
     twenty_four_hours_ago = now - timedelta(hours=24)
@@ -237,37 +246,53 @@ async def deactivate_low_activity_tokens():
     recent_counts = await database.fetch_all(recent_tweet_counts_query)
     tweet_count_map = {r["token_symbol"]: r["tweet_count_24h"] for r in recent_counts}
 
-    # Step 2: Get all active tokens
+    # Step 2: Get all active tokens with their metadata
     active_tokens_query = select([
         tokens.c.token_symbol,
         tokens.c.address,
-        tokens.c.created_at,
+        tokens.c.age,  # 👈 must exist in your tokens table
         tokens.c.tweet_count,
         tokens.c.volume_usd,
         tokens.c.market_cap_usd 
     ]).where(tokens.c.is_active == True)
     tokens_data = await database.fetch_all(active_tokens_query)
 
-    # Step 3: Filter tokens to deactivate
+    # Step 3: Apply deactivation rules
     tokens_to_deactivate = []
 
     for token in tokens_data:
         symbol = token["token_symbol"]
-        created_at = token["created_at"]
+        age_str = token["age"]
         tweet_count_total = token["tweet_count"]
         tweet_count_24h = tweet_count_map.get(symbol, 0)
         volume = token["volume_usd"]
-        market_cap = token["market_cap_usd"] or 0  # fallback to 0 if null
+        market_cap = token["market_cap_usd"] or 0
 
-        age_hours = (now - created_at).total_seconds() / 3600
+        age_hours = parse_age_to_hours(age_str)
 
-        if (
-            (age_hours > 3 and tweet_count_total < 20)
-            or (age_hours > 24 and volume < 200_000)
-            or (age_hours > 23 and tweet_count_24h < 10)
-            or (market_cap < 40_000)
-        ):
+        # ────────────────────────────────────────────
+        # Deactivation Rules:
+        # ────────────────────────────────────────────
+
+        # Rule 1: Created more than 3h ago AND tweet_count < 20
+        if age_hours > 3 and tweet_count_total < 20:
             tokens_to_deactivate.append(symbol)
+            continue
+
+        # Rule 2: Created more than 24h ago AND volume < $200k
+        if age_hours > 24 and volume < 200_000:
+            tokens_to_deactivate.append(symbol)
+            continue
+
+        # Rule 3: Created more than 23h ago AND < 10 tweets in last 24h
+        if age_hours > 23 and tweet_count_24h < 10:
+            tokens_to_deactivate.append(symbol)
+            continue
+
+        # Rule 4: Market cap less than $40k
+        if market_cap < 40_000:
+            tokens_to_deactivate.append(symbol)
+            continue
 
     # Step 4: Update DB
     if tokens_to_deactivate:
@@ -278,7 +303,7 @@ async def deactivate_low_activity_tokens():
         )
         await database.execute(update_query)
 
-    logging.info(f"🔻 Deactivated {len(tokens_to_deactivate)} low-activity tokens: {tokens_to_deactivate}")
+    logging.info(f"Deactivated {len(tokens_to_deactivate)} low-activity tokens: {tokens_to_deactivate}")
 
 # ────────────────────────────────────────────
 # Delete Tokens Older than 5days
