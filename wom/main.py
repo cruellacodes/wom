@@ -12,7 +12,7 @@ from services.token_service import (
     deactivate_low_activity_tokens,
     delete_old_tokens,
 )
-from services.tweet_service import run_tweet_pipeline
+from services.tweet_service import run_tweet_pipeline, run_score_pipeline
 from routes.tokens import tokens_router
 from routes.tweets import tweets_router
 
@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
         make_loop(fetch_tokens,            900),  # every 5m
         make_loop(run_tweet_pipeline,       60),  # every 1m
         make_loop(deactivate_low_activity_tokens, 60),  # every 1m
+        make_loop(run_score_pipeline,             300), # score every 5 min
         # make_loop(delete_old_tokens,        60),  # every 1m
     ]
 

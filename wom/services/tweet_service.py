@@ -300,45 +300,50 @@ async def fetch_stored_tweets(token):
 
 # === One-token workflow ===
 
-async def fetch_and_analyze(token_symbol: str):
-    # 1. Fetch tweets in last 48h (raw only)
+async def fetch_and_store_tweets(token_symbol: str):
     new_raw = await fetch_last_48h_tweets(token_symbol)
+    if not new_raw:
+        return
 
-    # 2. Preprocess
     processed_dict = await preprocess_tweets(new_raw, token_symbol)
     tweets = processed_dict.get(token_symbol, [])
     if not tweets:
         return
 
-    # 3. Sentiment
     sentiment_result = await get_sentiment({token_symbol: tweets})
     scored = sentiment_result.get(token_symbol, {}).get("tweets", [])
+    if not scored:
+        return
 
-    # 4. Deduplicate
     existing_ids = set(
         t["tweet_id"] for t in await fetch_stored_tweets(token_symbol)
     )
     new_tweets = [t for t in scored if t["tweet_id"] not in existing_ids]
+    if not new_tweets:
+        return
 
-    # 5. Store only new tweets
     await store_tweets(token_symbol, new_tweets)
 
-    # 6. Prune old tweets (>48h)
-    delete_stmt = delete(tweets).where(
-            (tweets.c.token_symbol == token_symbol.lower()) &
-            (tweets.c.created_at < datetime.now(timezone.utc) - timedelta(hours=48))
-        )
-    await database.execute(delete_stmt)
+async def recalculate_token_scores():
+    active = await fetch_active_tokens()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=48)
 
-    # 7. Fetch remaining tweets for this token
-    stored = await fetch_stored_tweets(token_symbol)
-    fresh = [t for t in stored if t["created_at"] and t["wom_score"] is not None]
+    for token in active:
+        tweets = await fetch_stored_tweets(token)
+        recent = [
+            t for t in tweets
+            if t["created_at"] and t["wom_score"] is not None
+            and try_parse_twitter_time(t["created_at"]) >= cutoff
+        ]
 
-    # 8. Final WOM score
-    final_score = compute_final_wom_score(fresh)
-    await update_token_table(token_symbol, final_score, len(fresh))
+        if not recent:
+            logging.info(f"[{token}] No recent tweets. Skipping WOM score update.")
+            continue
 
-    logging.info(f"[{token_symbol}] WOM={final_score} from {len(fresh)} tweets.")
+        final_score = compute_final_wom_score(recent)
+        await update_token_table(token, final_score, len(recent))
+        logging.info(f"[{token}] WOM={final_score} from {len(recent)} tweets.")
 
 def compute_final_wom_score(tweets):
     """Compute final WOM score using time decay and scaling."""
@@ -470,7 +475,7 @@ async def run_tweet_pipeline():
         return
 
     results = await asyncio.gather(
-        *(fetch_and_analyze(token) for token in active_tokens),
+        *(fetch_and_store_tweets(token) for token in active_tokens),
         return_exceptions=True
     )
 
@@ -479,3 +484,35 @@ async def run_tweet_pipeline():
             logging.error(f"[tweet_pipeline] Token: {token} → {repr(result)}")
         else:
             logging.info(f"[tweet_pipeline] Token: {token} processed.")
+
+async def run_score_pipeline():
+    logging.info("Recalculating final WOM scores...")
+
+    active_tokens = await fetch_active_tokens()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=48)
+
+    for token in active_tokens:
+        try:
+            stored = await fetch_stored_tweets(token)
+            valid = [
+                t for t in stored
+                if t["created_at"] and t["wom_score"] is not None and
+                try_parse_twitter_time(t["created_at"]) >= cutoff
+            ]
+
+            if not valid:
+                logging.info(f"[{token}] No valid recent tweets, skipping score update.")
+                continue
+
+            final_score = compute_final_wom_score(valid)
+            await update_token_table(token, final_score, len(valid))
+            logging.info(f"[{token}] Final WOM={final_score} from {len(valid)} tweets.")
+
+        except Exception as e:
+            logging.error(f"[score_pipeline] Token: {token} → {repr(e)}")
+
+async def prune_old_tweets():
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    stmt = delete(tweets).where(tweets.c.created_at < cutoff)
+    await database.execute(stmt)
