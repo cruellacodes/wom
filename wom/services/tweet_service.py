@@ -490,8 +490,9 @@ async def run_score_pipeline():
             valid = [
                 t for t in stored
                 if t["created_at"] and t["wom_score"] is not None and
-                try_parse_twitter_time(t["created_at"]) >= cutoff
+                t["created_at"] >= cutoff
             ]
+
 
             if not valid:
                 logging.info(f"[{token}] No valid recent tweets, skipping score update.")
@@ -503,6 +504,9 @@ async def run_score_pipeline():
 
         except Exception as e:
             logging.error(f"[score_pipeline] Token: {token} → {repr(e)}")
+            
+    await prune_old_tweets()
+    logging.info("Old tweets >48h pruned.")
 
 async def prune_old_tweets():
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
