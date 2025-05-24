@@ -125,7 +125,7 @@ async def fetch_tweets_from_rapidapi(token_symbol, cursor=None, retries=3):
             except httpx.HTTPStatusError as e:
                 logging.error(f"RapidAPI HTTP error for {token_symbol}: {e.response.status_code}")
             except httpx.RequestError as e:
-                logging.warning(f"RapidAPI request error for {token_symbol}: {e}")
+                logging.warning(f"RapidAPI request error for {token_symbol}: {e.__class__.__name__} → {str(e)}")
             except Exception as e:
                 logging.error(f"RapidAPI unknown error for {token_symbol}: {e}")
         
@@ -440,7 +440,12 @@ async def fetch_last_48h_tweets(token_symbol: str):
                 seen_ids.add(tweet["tweet_id"])
 
         if not filtered:
-            break
+            pages += 1
+            cursor = next_cursor
+            if not cursor:
+                break
+            continue
+
 
         all_tweets.extend(filtered)
 
