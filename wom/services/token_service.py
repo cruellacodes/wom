@@ -410,13 +410,20 @@ async def fetch_token_info_by_address(token_address: str, chain_id: str = "solan
                 headers=headers,
                 params=params
             )
+            logging.info(f"[TOKEN] Request URL: {response.url}")
+            logging.info(f"[TOKEN] Status: {response.status_code}")
+            logging.info(f"[TOKEN] Body: {response.text}")
+
             response.raise_for_status()
             data = response.json()
             if isinstance(data, list) and data:
                 return data[0]
+        except httpx.HTTPStatusError as e:
+            logging.error(f"Failed to fetch token info (status {e.response.status_code}) for {token_address}: {e}")
+            logging.error(f"Response body: {e.response.text}")
         except Exception as e:
-            logging.error(f"Failed to fetch token info for {token_address}: {e}")
-            return None
+            logging.error(f"Unknown error fetching token info for {token_address}: {e}")
+        return None
 
 MAX_CONCURRENT_REQUESTS = 10  # Control concurrency (tune based on your API limit)
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
