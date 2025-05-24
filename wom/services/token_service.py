@@ -410,9 +410,6 @@ async def fetch_token_info_by_address(token_address: str, chain_id: str = "solan
                 headers=headers,
                 params=params
             )
-            logging.info(f"[TOKEN] Request URL: {response.url}")
-            logging.info(f"[TOKEN] Status: {response.status_code}")
-            logging.info(f"[TOKEN] Body: {response.text}")
 
             response.raise_for_status()
             data = response.json()
