@@ -377,7 +377,7 @@ def compute_final_wom_score(tweets: list[dict]) -> float:
 # === Stateless fetching ===
 
 TWEET_TIME_WINDOW_HOURS = 48
-MAX_FETCH_PAGES = 5  # prevent infinite loops
+MAX_FETCH_PAGES = 10  # prevent infinite loops
 
 def normalize_created_at(raw_time: str) -> str | None:
     if not raw_time:
@@ -504,7 +504,7 @@ async def run_score_pipeline():
 
         except Exception as e:
             logging.error(f"[score_pipeline] Token: {token} → {repr(e)}")
-            
+
     await prune_old_tweets()
     logging.info("Old tweets >48h pruned.")
 
