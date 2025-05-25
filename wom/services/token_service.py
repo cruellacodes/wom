@@ -412,7 +412,7 @@ async def fetch_token_info_by_address(token_address: str, chain_id: str = "solan
             )
 
             response.raise_for_status()
-            data = await response.json()
+            data = response.json()
             if isinstance(data, list) and data:
                 return data[0]
         except httpx.HTTPStatusError as e:
