@@ -40,9 +40,9 @@ async def get_tweets(token_symbol: str):
         # 4. Final WOM score 
         final_score = compute_final_wom_score([
             {
-                "created_at": t["created_at"],
+                "created_at": try_parse_twitter_time(t["created_at"]),
                 "wom_score": t["wom_score"]
-            } for t in scored.get("tweets", [])
+            } for t in scored.get("tweets", []) if try_parse_twitter_time(t["created_at"])
         ])
 
         return {
