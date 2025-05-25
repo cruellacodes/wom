@@ -37,13 +37,18 @@ async def get_tweets(token_symbol: str):
         sentiment_result = await get_sentiment({token_symbol: tweets})
         scored = sentiment_result.get(token_symbol, {})
 
-        # 4. Final WOM score 
-        final_score = compute_final_wom_score([
-            {
-                "created_at": try_parse_twitter_time(t["created_at"]),
-                "wom_score": t["wom_score"]
-            } for t in scored.get("tweets", []) if try_parse_twitter_time(t["created_at"])
-        ])
+        # 4. Final WOM score
+        cleaned_scores = []
+        for t in scored.get("tweets", []):
+            dt = try_parse_twitter_time(t["created_at"])
+            if dt:
+                cleaned_scores.append({
+                    "created_at": dt,
+                    "wom_score": t["wom_score"]
+                })
+
+        final_score = compute_final_wom_score(cleaned_scores)
+
 
         return {
             "token_symbol": token_symbol,
