@@ -33,12 +33,11 @@ async def get_tokens(
 
 @tokens_router.get("/search-token/{token_address}")
 async def search_token(token_address: str):
-    token_pairs = await fetch_token_info_by_address(token_address.lower())
+    token_info = await fetch_token_info_by_address(token_address.lower())
 
-    if not token_pairs or not isinstance(token_pairs, list):
+    if not token_info or not isinstance(token_info, dict):
         raise HTTPException(status_code=404, detail="Token not found on Dexscreener.")
 
-    token_info = token_pairs[0]  # Get first result
     base = token_info.get("baseToken", {})
     pair_created_at = token_info.get("pairCreatedAt")
 
