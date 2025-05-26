@@ -517,3 +517,17 @@ async def prune_old_tweets():
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
     stmt = delete(tweets).where(tweets.c.created_at < cutoff)
     await database.execute(stmt)
+
+async def handle_on_demand_search(token_symbol: str) -> dict:
+    raw_tweets = await fetch_last_48h_tweets(token_symbol)
+    processed = await preprocess_tweets(raw_tweets, token_symbol)
+    tweets = processed.get(token_symbol, [])
+
+    if not tweets:
+        return {"token_symbol": token_symbol, "tweets": [], "wom_score": 0.0}
+
+    sentiment_result = await get_sentiment({token_symbol: tweets})
+    scored = sentiment_result.get(token_symbol, {}).get("tweets", [])
+
+    score = compute_final_wom_score(scored)
+    return {"token_symbol": token_symbol, "tweets": scored, "wom_score": score}
