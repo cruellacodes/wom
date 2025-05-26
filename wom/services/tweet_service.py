@@ -414,51 +414,50 @@ def try_parse_twitter_time(ts: str) -> datetime | None:
 
 
 async def fetch_last_48h_tweets(token_symbol: str):
-    end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(hours=TWEET_TIME_WINDOW_HOURS)
+    now = datetime.now(timezone.utc)
+    start_time = now - timedelta(hours=48)
 
     all_tweets = []
     seen_ids = set()
     cursor = None
     pages = 0
+    MAX_PAGES = 10
+    MAX_TWEETS = 200
 
-    while pages < MAX_FETCH_PAGES:
+    while pages < MAX_PAGES:
         raw_batch, next_cursor = await fetch_tweets_from_rapidapi(token_symbol, cursor=cursor)
         if not raw_batch:
             break
 
-        # Filter by timestamp
-        filtered = []
+        filtered_batch = []
+        stop_pagination = False
+
         for tweet in raw_batch:
             created_at = try_parse_twitter_time(tweet.get("created_at"))
             if not created_at:
                 continue
 
-            if created_at >= start_time and tweet["tweet_id"] not in seen_ids:
-                tweet["created_at"] = created_at.isoformat()
-                filtered.append(tweet)
-                seen_ids.add(tweet["tweet_id"])
+            if created_at < start_time:
+                stop_pagination = True
+                continue
 
-        if not filtered:
-            pages += 1
-            cursor = next_cursor
-            if not cursor:
-                break
-            continue
+            if tweet["tweet_id"] in seen_ids:
+                continue
 
+            tweet["created_at"] = created_at.isoformat()
+            filtered_batch.append(tweet)
+            seen_ids.add(tweet["tweet_id"])
 
-        all_tweets.extend(filtered)
+        all_tweets.extend(filtered_batch)
+        logging.info(f"[{token_symbol}] Page {pages+1}: {len(filtered_batch)} valid tweets")
 
-        # Stop if the oldest tweet is outside the 48h window
-        oldest = min(try_parse_twitter_time(t["created_at"]) for t in filtered if t.get("created_at"))
-        if oldest < start_time:
+        if stop_pagination or not next_cursor or len(all_tweets) >= MAX_TWEETS:
             break
 
         cursor = next_cursor
-        if not cursor:
-            break
         pages += 1
 
+    logging.info(f"[{token_symbol}] Total tweets fetched: {len(all_tweets)}")
     return all_tweets
 
 # === Run for all active tokens ===

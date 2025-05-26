@@ -56,10 +56,8 @@ async def lifespan(app: FastAPI):
 
     # 2) Kick off ALL 4 loops as tasks
     tasks = [
-        make_loop(fetch_tokens,            900),  # every 5m
-        make_loop(run_tweet_pipeline,       60),  # every 1m
-        make_loop(deactivate_low_activity_tokens, 300),  # every 5m
-        make_loop(run_score_pipeline,             300), # score every 5 min
+        make_loop(fetch_tokens,            900),  # every 15m
+        make_loop(tweet_score_deactivate_pipeline, 120)
         # make_loop(delete_old_tokens,        60),  # every 1m
     ]
 
@@ -84,6 +82,11 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+async def tweet_score_deactivate_pipeline():
+    await run_tweet_pipeline()
+    await run_score_pipeline()
+    await deactivate_low_activity_tokens()
 
 app.include_router(tokens_router)
 app.include_router(tweets_router)
