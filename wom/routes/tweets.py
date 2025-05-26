@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Query, HTTPException # type: ignore
-from services.tweet_service import compute_final_wom_score, fetch_last_48h_tweets, fetch_stored_tweets, get_sentiment, preprocess_tweets, try_parse_twitter_time
+import asyncio
 import logging
-from datetime import datetime, timezone
+from fastapi import APIRouter, Query, HTTPException # type: ignore
+from services.tweet_service import fetch_stored_tweets, handle_on_demand_search
 
 tweets_router = APIRouter()
 
@@ -19,43 +19,8 @@ async def get_stored_tweets_endpoint(token_symbol: str = Query(...)):
 @tweets_router.get("/tweets/{token_symbol}")
 async def get_tweets(token_symbol: str):
     try:
-        # 1. Fetch raw tweets (no DB)
-        raw_tweets = await fetch_last_48h_tweets(token_symbol)
-
-        # 2. Preprocess 
-        processed_dict = await preprocess_tweets(raw_tweets, token_symbol)
-        tweets = processed_dict.get(token_symbol, [])
-
-        if not tweets:
-            return {
-                "token_symbol": token_symbol,
-                "tweets": [],
-                "wom_score": 0.0
-            }
-
-        # 3. Sentiment
-        sentiment_result = await get_sentiment({token_symbol: tweets})
-        scored = sentiment_result.get(token_symbol, {})
-
-        # 4. Final WOM score
-        cleaned_scores = []
-        for t in scored.get("tweets", []):
-            dt = try_parse_twitter_time(t["created_at"])
-            if dt:
-                cleaned_scores.append({
-                    "created_at": dt,
-                    "wom_score": t["wom_score"]
-                })
-
-        final_score = compute_final_wom_score(cleaned_scores)
-
-
-        return {
-            "token_symbol": token_symbol,
-            "tweets": scored.get("tweets", []),
-            "wom_score": final_score
-        }
-
+        result = await asyncio.create_task(handle_on_demand_search(token_symbol))
+        return result
     except Exception as e:
-        logging.error(f"Error fetching tweets for {token_symbol}: {e}")
+        logging.error(f"Error in search-on-demand for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
