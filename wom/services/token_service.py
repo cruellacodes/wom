@@ -240,13 +240,11 @@ def parse_age_to_hours(age_str: str) -> float:
         logging.warning(f"Invalid age value: {age_str}")
         return 0.0
 
-GRACE_PERIOD = timedelta(minutes=30)
-
 async def deactivate_low_activity_tokens():
     now = datetime.now(timezone.utc)
     twenty_four_hours_ago = now - timedelta(hours=24)
 
-    # Step 1: Count recent tweets per token (last 24h)
+    # Step 1: Count 24h tweet activity per token from stored tweets table
     recent_tweet_counts_query = (
         select([
             tweets.c.token_symbol,
@@ -258,58 +256,52 @@ async def deactivate_low_activity_tokens():
     recent_counts = await database.fetch_all(recent_tweet_counts_query)
     tweet_count_map = {r["token_symbol"]: r["tweet_count_24h"] for r in recent_counts}
 
-    # Step 2: Get all active tokens with their metadata
+    # Step 2: Get all active tokens and their metadata
     active_tokens_query = select([
         tokens.c.token_symbol,
         tokens.c.address,
-        tokens.c.age,  
+        tokens.c.age,
         tokens.c.tweet_count,
         tokens.c.volume_usd,
         tokens.c.market_cap_usd,
-        tokens.c.created_at  # ← Add this
     ]).where(tokens.c.is_active == True)
+
     tokens_data = await database.fetch_all(active_tokens_query)
 
-    # Step 3: Apply deactivation rules
+    # Step 3: Deactivation logic
     tokens_to_deactivate = []
 
     for token in tokens_data:
         symbol = token["token_symbol"]
-        created_at = token["created_at"]
-
-        # ─── Grace Period Check ───
-        if (now - created_at) < GRACE_PERIOD:
-            continue  # Give token time to accumulate tweets
-
         age_str = token["age"]
         tweet_count_total = token["tweet_count"]
         tweet_count_24h = tweet_count_map.get(symbol, 0)
-        volume = token["volume_usd"]
+        volume = token["volume_usd"] or 0
         market_cap = token["market_cap_usd"] or 0
 
         age_hours = parse_age_to_hours(age_str)
 
-        # ────────────────────────────────────────────
-        # Deactivation Rules:
-        # ────────────────────────────────────────────
-
+        # Rule 1: Token older than 3h but has < 20 total tweets
         if age_hours > 3 and tweet_count_total < 20:
             tokens_to_deactivate.append(symbol)
             continue
 
+        # Rule 2: Token older than 24h but volume < $200K
         if age_hours > 24 and volume < 200_000:
             tokens_to_deactivate.append(symbol)
             continue
 
+        # Rule 3: Token older than 23h with < 10 tweets in last 24h
         if age_hours > 23 and tweet_count_24h < 10:
             tokens_to_deactivate.append(symbol)
             continue
 
+        # Rule 4: Market cap too low
         if market_cap < 40_000:
             tokens_to_deactivate.append(symbol)
             continue
 
-    # Step 4: Update DB
+    # Step 4: DB update
     if tokens_to_deactivate:
         update_query = (
             tokens.update()
@@ -318,7 +310,7 @@ async def deactivate_low_activity_tokens():
         )
         await database.execute(update_query)
 
-    logging.info(f"Deactivated {len(tokens_to_deactivate)} low-activity tokens: {tokens_to_deactivate}")
+    logging.info(f"[Deactivate] {len(tokens_to_deactivate)} tokens deactivated: {tokens_to_deactivate}")
 
 # ────────────────────────────────────────────
 # Delete Tokens Older than 5days
