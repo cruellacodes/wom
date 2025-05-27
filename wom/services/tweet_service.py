@@ -355,7 +355,7 @@ def compute_final_wom_score(tweets: list[dict]) -> float:
         return 1.0
 
     now = datetime.now(timezone.utc)
-    decay_hours = 12  # half-life
+    decay_hours = 12
     weight_sum = 0.0
     score_sum = 0.0
 
@@ -367,12 +367,19 @@ def compute_final_wom_score(tweets: list[dict]) -> float:
 
     avg_score = score_sum / weight_sum if weight_sum else 50.0
 
-    # Bayesian smoothing (adjust constants based on data scale)
-    prior = 50.0  # neutral baseline
-    confidence = 15  # how many tweets to "trust" the score
-
+    # Bayesian smoothing
+    prior = 50.0
+    confidence = 15
     smoothed = ((confidence * prior) + (len(tweets) * avg_score)) / (confidence + len(tweets))
-    return round(smoothed, 2)
+
+    # Volume weighting
+    def volume_boost(count, mid=5):
+        return 1 / (1 + math.exp(-0.5 * (count - mid)))
+
+    volume_weight = volume_boost(len(tweets))
+    final_score = smoothed * volume_weight
+
+    return round(min(final_score, 100.0), 2)
 
 # === Stateless fetching ===
 
