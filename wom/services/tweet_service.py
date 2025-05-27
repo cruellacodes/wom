@@ -528,5 +528,9 @@ async def handle_on_demand_search(token_symbol: str) -> dict:
     sentiment_result = await get_sentiment({token_symbol: tweets})
     scored = sentiment_result.get(token_symbol, {}).get("tweets", [])
 
+    for tweet in scored:
+        if isinstance(tweet["created_at"], str):
+            tweet["created_at"] = datetime.fromisoformat(tweet["created_at"])
+
     score = compute_final_wom_score(scored)
     return {"token_symbol": token_symbol, "tweets": scored, "wom_score": score}
