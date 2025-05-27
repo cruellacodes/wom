@@ -450,11 +450,22 @@ async def update_token_task(symbol: str, address: str):
 
 
 async def update_token_in_db(address: str, token_info: dict):
+    pair_created_at = token_info.get("pairCreatedAt")
+    age_str = None
+
+    if pair_created_at:
+        try:
+            age_str = format_token_age(pair_created_at)
+        except Exception as e:
+            logging.warning(f"[TokenAge] Failed to parse age for token {address}: {e}")
+
     update_query = tokens.update().where(tokens.c.address == address).values(
         volume_usd=token_info.get("volume", {}).get("h24", 0),
         liquidity_usd=token_info.get("liquidity", {}).get("usd", 0),
         market_cap_usd=token_info.get("marketCap", 0),
         pricechange1h=token_info.get("priceChange", {}).get("h1", 0),
         last_seen_at=datetime.now(timezone.utc),
+        age=age_str
     )
+
     await database.execute(update_query)
