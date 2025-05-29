@@ -1,5 +1,8 @@
+from enum import Enum
 from sqlalchemy import Table, Column, String, Text, Integer, Float, Boolean, DateTime, ForeignKey, MetaData
 from datetime import datetime, timezone
+
+from wom.wom.enums import LaunchpadType
 
 sa_metadata = MetaData()
 default = lambda: datetime.now(timezone.utc)
@@ -22,7 +25,7 @@ tokens = Table(
     Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
     Column("last_seen_at", DateTime(timezone=True), default=default),
     Column("is_active", Boolean, default=True),
-    Column("is_believe", Boolean, default=False),
+    Column("launchpad", Enum(LaunchpadType, name="launchpadtype"), nullable=False, default=LaunchpadType.UNKNOWN),
 )
 
 tweets = Table(
