@@ -11,6 +11,7 @@ import unicodedata
 import logging
 import asyncio
 import re
+from enums import LaunchpadType
 
 # Logging setup
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -20,6 +21,18 @@ load_dotenv()
 api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
+
+def detect_launchpad_from_address(address: str) -> LaunchpadType:
+    addr_upper = address.upper()
+
+    if "PUMP" in addr_upper:
+        return LaunchpadType.PUMPFUN
+    if "BONK" in addr_upper:
+        return LaunchpadType.BONK
+    if "BOOP" in addr_upper:
+        return LaunchpadType.BOOP
+
+    return LaunchpadType.UNKNOWN
 
 # ────────────────────────────────────────────
 # Fetch & Filter Tokens
@@ -144,7 +157,6 @@ async def get_filtered_pairs():
             if symbol_with_dollar in seen_symbols:
                 continue
 
-            is_believe = "DYN" in item.get("labels", [])
             seen_symbols.add(symbol_with_dollar)
             pair_created_at = item.get("pairCreatedAt")
             age_string = format_token_age(pair_created_at) if pair_created_at else "N/A"
@@ -158,7 +170,6 @@ async def get_filtered_pairs():
                 "liquidity_usd": liq,
                 "market_cap_usd": mcap,
                 "priceChange1h": item.get("priceChange", {}).get("h1", 0),
-                "is_believe": is_believe,
                 "age": age_string,
             })
 
@@ -186,11 +197,12 @@ async def store_tokens(tokens_data):
             dex_url=f"https://dexscreener.com/solana/{token.get('address')}",
             pricechange1h=token.get("priceChange1h"),
             created_at=now,
+            launchpad=token.get("launchpad", LaunchpadType.UNKNOWN),
             last_seen_at=now,
             is_active=True,
             wom_score=1.0,
             tweet_count=0,
-            is_believe=token.get("is_believe", False),
+            
         )
 
         update_stmt = insert_stmt.on_conflict_do_update(
@@ -207,7 +219,6 @@ async def store_tokens(tokens_data):
                 "pricechange1h": insert_stmt.excluded.pricechange1h,
                 "last_seen_at": now,
                 "is_active": True,
-                "is_believe": insert_stmt.excluded.is_believe,
             }
         )
 
@@ -374,7 +385,7 @@ async def fetch_tokens_from_db():
             "priceChange1h": row["pricechange1h"],
             "WomScore": row["wom_score"],
             "TweetCount": row["tweet_count"],
-            "IsBelieve": row["is_believe"],
+            "LaunchpadType": row["launchpad"],
         }
         for row in rows
     ]
@@ -465,6 +476,7 @@ async def update_token_in_db(address: str, token_info: dict):
         market_cap_usd=token_info.get("marketCap", 0),
         pricechange1h=token_info.get("priceChange", {}).get("h1", 0),
         last_seen_at=datetime.now(timezone.utc),
+        image_url=token_info.get("info", {}).get("imageUrl", None),
         age=age_str
     )
 

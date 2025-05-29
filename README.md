@@ -95,17 +95,20 @@ Query all tweets currently stored in the DB for a token.
 
 ## ✶ Project Structure
 
+```
 wom/
 ├── services/
-│   ├── token_service.py      # Token ingestion + filtering
-│   ├── tweet_service.py      # Tweet ingestion, scoring, storage
-├── models.py                 # DB schema (SQLAlchemy Core)
-├── db.py                     # Async DB session setup
-├── utils.py                  # Shared filters & text tools
-├── main.py                   # FastAPI entrypoint
-├── routers/
-│   ├── tokens.py             # Token endpoints
-│   ├── tweets.py             # Tweet endpoints
+│   ├── token_service.py      — Token ingestion + filtering
+│   ├── tweet_service.py      — Tweet ingestion, scoring, storage
+├── models.py                 — DB schema (SQLAlchemy Core)
+├── db.py                     — Async DB session setup
+├── utils.py                  — Shared filters & text tools
+├── main.py                   — FastAPI entrypoint
+├──routers/
+│   ├── tokens.py             — Token endpoints
+│   ├── tweets.py             — Tweet endpoints
+```
+
 
 ## ✶ Setup & Deployment
 
