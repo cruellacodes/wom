@@ -2,7 +2,7 @@ from enum import Enum
 from sqlalchemy import Table, Column, String, Text, Integer, Float, Boolean, DateTime, ForeignKey, MetaData
 from datetime import datetime, timezone
 
-from wom.wom.enums import LaunchpadType
+from enums import LaunchpadType
 
 sa_metadata = MetaData()
 default = lambda: datetime.now(timezone.utc)
