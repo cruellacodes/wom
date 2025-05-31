@@ -22,7 +22,7 @@ api_token = os.getenv("APIFY_API_TOKEN")
 if not api_token:
     raise ValueError("Apify API token not found in environment variables!")
 
-def detect_launchpad_from_address(address: str) -> LaunchpadType:
+def detect_launchpad_from_address(address: str) -> str:
     addr_upper = address.upper()
 
     if "PUMP" in addr_upper:
