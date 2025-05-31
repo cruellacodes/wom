@@ -511,6 +511,7 @@ async def run_score_pipeline():
 
             final_score = compute_final_wom_score(valid)
             await update_token_table(token, final_score, len(valid))
+            await update_avg_followers_count(token)
             logging.info(f"[{token}] Final WOM={final_score} from {len(valid)} tweets.")
 
         except Exception as e:
@@ -541,3 +542,23 @@ async def handle_on_demand_search(token_symbol: str) -> dict:
 
     score = compute_final_wom_score(scored)
     return {"token_symbol": token_symbol, "tweets": scored, "wom_score": score}
+
+async def update_avg_followers_count(token_symbol: str):
+    tweets_data = await fetch_stored_tweets(token_symbol)
+    recent = [
+        t for t in tweets_data
+        if t["created_at"] and try_parse_twitter_time(t["created_at"]) >= datetime.now(timezone.utc) - timedelta(hours=48)
+    ]
+
+    if not recent:
+        avg_followers = 0
+    else:
+        total = sum(t["followers_count"] for t in recent)
+        avg_followers = total // len(recent)
+
+    stmt = tokens.update().where(
+        tokens.c.token_symbol == token_symbol.lower()
+    ).values(
+        avg_followers_count=avg_followers
+    )
+    await database.execute(stmt)
