@@ -163,7 +163,7 @@ async def get_filtered_pairs():
 
             filtered_tokens.append({
                 "token_symbol": symbol_with_dollar,
-                "token_name": base.get("name", "Unknown"),
+                "token_name": base.get("name", "unknown"),
                 "image_url": item.get("info", {}).get("imageUrl", None),
                 "address": base.get("address", "N/A"),
                 "volume_usd": vol,
