@@ -51,19 +51,25 @@ def make_loop(fn, interval_seconds):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from services.search_service import process_search_queue 
+
+    # Connect to DB
     await database.connect()
     logging.info("Connected to database.")
 
-    # Create in-memory search queue and attach to app
-    search_queue = asyncio.Queue()
+    # Create in-memory async queue
+    search_queue = asyncio.Queue(maxsize=100)  
     app.state.search_queue = search_queue
 
-    # Kick off background tasks
+    # Start background workers
     tasks = [
         make_loop(fetch_tokens, 900),
         make_loop(tweet_score_deactivate_pipeline, 120),
-        make_loop(lambda: process_search_queue(search_queue), 1),  # 👈 new search worker
     ]
+
+    # Launch 5 parallel search processors
+    for i in range(5):
+        tasks.append(make_loop(lambda: process_search_queue(search_queue), 1))
 
     yield
 

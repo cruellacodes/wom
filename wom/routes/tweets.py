@@ -2,6 +2,7 @@ import asyncio
 import logging
 from fastapi import APIRouter, Query, HTTPException, Request # type: ignore
 from services.tweet_service import fetch_stored_tweets
+from services.search_service import get_or_create_token_future
 
 tweets_router = APIRouter()
 
@@ -18,14 +19,13 @@ async def get_stored_tweets_endpoint(token_symbol: str = Query(...)):
 
 @tweets_router.get("/tweets/{token_symbol}")
 async def queue_search_on_demand(token_symbol: str, request: Request):
+    token_symbol = token_symbol.lower()
     queue = request.app.state.search_queue
-    future = asyncio.get_event_loop().create_future()
 
-    # Queue this search
-    await queue.put((token_symbol.lower(), future))
+    future = get_or_create_token_future(token_symbol, queue)
 
     try:
-        result = await asyncio.wait_for(future, timeout=30)
+        result = await asyncio.wait_for(future, timeout=60)
         return result
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Search timed out")
