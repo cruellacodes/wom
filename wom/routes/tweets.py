@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from fastapi import APIRouter, Query, HTTPException # type: ignore
-from services.tweet_service import fetch_stored_tweets, handle_on_demand_search
+from fastapi import APIRouter, Query, HTTPException, Request # type: ignore
+from services.tweet_service import fetch_stored_tweets
 
 tweets_router = APIRouter()
 
@@ -17,10 +17,17 @@ async def get_stored_tweets_endpoint(token_symbol: str = Query(...)):
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @tweets_router.get("/tweets/{token_symbol}")
-async def get_tweets(token_symbol: str):
+async def queue_search_on_demand(token_symbol: str, request: Request):
+    queue = request.app.state.search_queue
+    future = asyncio.get_event_loop().create_future()
+
+    # Queue this search
+    await queue.put((token_symbol.lower(), future))
+
     try:
-        result = await asyncio.create_task(handle_on_demand_search(token_symbol))
+        result = await asyncio.wait_for(future, timeout=30)
         return result
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Search timed out")
     except Exception as e:
-        logging.error(f"Error in search-on-demand for {token_symbol}: {e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        raise HTTPException(status_code=500, detail=str(e))
