@@ -26,13 +26,13 @@ def detect_launchpad_from_address(address: str) -> LaunchpadType:
     addr_upper = address.upper()
 
     if "PUMP" in addr_upper:
-        return LaunchpadType.PUMPFUN
+        return LaunchpadType.PUMPFUN.value
     if "BONK" in addr_upper:
-        return LaunchpadType.BONK
+        return LaunchpadType.BONK.value
     if "BOOP" in addr_upper:
-        return LaunchpadType.BOOP
+        return LaunchpadType.BOOP.value
 
-    return LaunchpadType.UNKNOWN
+    return LaunchpadType.UNKNOWN.value
 
 # ────────────────────────────────────────────
 # Fetch & Filter Tokens
@@ -197,7 +197,7 @@ async def store_tokens(tokens_data):
             dex_url=f"https://dexscreener.com/solana/{token.get('address')}",
             pricechange1h=token.get("priceChange1h"),
             created_at=now,
-            launchpad=token.get("launchpad", LaunchpadType.UNKNOWN),
+            launchpad=token.get("launchpad", LaunchpadType.UNKNOWN.value),
             last_seen_at=now,
             is_active=True,
             wom_score=1.0,
