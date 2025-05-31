@@ -13,6 +13,7 @@ from services.token_service import (
     delete_old_tokens,
 )
 from services.tweet_service import run_tweet_pipeline, run_score_pipeline
+from services.search_service import process_search_queue
 from routes.tokens import tokens_router
 from routes.tweets import tweets_router
 
@@ -50,20 +51,22 @@ def make_loop(fn, interval_seconds):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1) DB connect
     await database.connect()
     logging.info("Connected to database.")
 
-    # 2) Kick off ALL 4 loops as tasks
+    # Create in-memory search queue and attach to app
+    search_queue = asyncio.Queue()
+    app.state.search_queue = search_queue
+
+    # Kick off background tasks
     tasks = [
-        make_loop(fetch_tokens,            900),  # every 15m
-        make_loop(tweet_score_deactivate_pipeline, 120)
-        # make_loop(delete_old_tokens,        60),  # every 1m
+        make_loop(fetch_tokens, 900),
+        make_loop(tweet_score_deactivate_pipeline, 120),
+        make_loop(lambda: process_search_queue(search_queue), 1),  # 👈 new search worker
     ]
 
-    yield  
+    yield
 
-    # 3) Teardown
     logging.info("Shutting down background tasks…")
     for t in tasks:
         t.cancel()
