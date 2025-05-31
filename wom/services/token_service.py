@@ -175,6 +175,14 @@ async def get_filtered_pairs():
 
         logging.info(f"[DONE] {len(filtered_tokens)} tokens passed filters: {[t['token_symbol'] for t in filtered_tokens]}")
         return filtered_tokens
+    
+def sanitize_launchpad(val) -> str:
+    try:
+        if isinstance(val, LaunchpadType):
+            return val.value
+        return LaunchpadType(val.lower()).value
+    except Exception:
+        return LaunchpadType.UNKNOWN.value
 
 # ────────────────────────────────────────────
 # Store Tokens
@@ -197,7 +205,7 @@ async def store_tokens(tokens_data):
             dex_url=f"https://dexscreener.com/solana/{token.get('address')}",
             pricechange1h=token.get("priceChange1h"),
             created_at=now,
-            launchpad=token.get("launchpad", LaunchpadType.UNKNOWN.value),
+            launchpad=sanitize_launchpad(token.get("launchpad")),
             last_seen_at=now,
             is_active=True,
             wom_score=1.0,
