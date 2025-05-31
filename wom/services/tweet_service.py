@@ -300,7 +300,7 @@ async def fetch_stored_tweets(token):
 # === One-token workflow ===
 
 async def fetch_and_store_tweets(token_symbol: str):
-    new_raw = await fetch_last_48h_tweets(token_symbol)
+    new_raw = await fetch_last_Xh_tweets(token_symbol)
     if not new_raw:
         return
 
@@ -420,9 +420,9 @@ def try_parse_twitter_time(ts: str) -> datetime | None:
         return None
 
 
-async def fetch_last_48h_tweets(token_symbol: str):
+async def fetch_last_Xh_tweets(token_symbol: str, hours: int = 48):
     now = datetime.now(timezone.utc)
-    start_time = now - timedelta(hours=48)
+    start_time = now - timedelta(hours=hours)
 
     all_tweets = []
     seen_ids = set()
@@ -437,7 +437,6 @@ async def fetch_last_48h_tweets(token_symbol: str):
             break
 
         filtered_batch = []
-        stop_pagination = False
 
         for tweet in raw_batch:
             created_at = try_parse_twitter_time(tweet.get("created_at"))
@@ -445,8 +444,7 @@ async def fetch_last_48h_tweets(token_symbol: str):
                 continue
 
             if created_at < start_time:
-                stop_pagination = True
-                continue
+                continue  # do NOT stop pagination
 
             if tweet["tweet_id"] in seen_ids:
                 continue
@@ -458,11 +456,12 @@ async def fetch_last_48h_tweets(token_symbol: str):
         all_tweets.extend(filtered_batch)
         logging.info(f"[{token_symbol}] Page {pages+1}: {len(filtered_batch)} valid tweets")
 
-        if stop_pagination or not next_cursor or len(all_tweets) >= MAX_TWEETS:
+        pages += 1
+
+        if not next_cursor or len(all_tweets) >= MAX_TWEETS:
             break
 
         cursor = next_cursor
-        pages += 1
 
     logging.info(f"[{token_symbol}] Total tweets fetched: {len(all_tweets)}")
     return all_tweets
@@ -526,7 +525,7 @@ async def prune_old_tweets():
     await database.execute(stmt)
 
 async def handle_on_demand_search(token_symbol: str) -> dict:
-    raw_tweets = await fetch_last_48h_tweets(token_symbol)
+    raw_tweets = await fetch_last_Xh_tweets(token_symbol, hours=24)
     processed = await preprocess_tweets(raw_tweets, token_symbol)
     tweets = processed.get(token_symbol, [])
 
