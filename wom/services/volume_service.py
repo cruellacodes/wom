@@ -3,13 +3,13 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict
 
-from services.tweet_service import fetch_last_48h_tweets, preprocess_tweets
+from services.tweet_service import fetch_last_Xh_tweets, preprocess_tweets
 
 # Active volume fetches in progress
 in_progress_volume: Dict[str, asyncio.Future] = {}
 
 async def handle_volume_count(token_symbol: str) -> dict:
-    raw_tweets = await fetch_last_48h_tweets(token_symbol)
+    raw_tweets = await fetch_last_Xh_tweets(token_symbol,24)
     processed = await preprocess_tweets(raw_tweets, token_symbol)
     tweets = processed.get(token_symbol, [])
 
