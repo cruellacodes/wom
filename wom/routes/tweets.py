@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Query, HTTPException, Request # type: ignore
 from services.tweet_service import fetch_stored_tweets
 from services.search_service import get_or_create_token_future
+from services.volume_service import get_or_create_volume_future
 
 tweets_router = APIRouter()
 
@@ -31,3 +32,18 @@ async def queue_search_on_demand(token_symbol: str, request: Request):
         raise HTTPException(status_code=504, detail="Search timed out")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+    from services.volume_service import get_or_create_volume_future
+
+@tweets_router.get("/volume/{token_symbol}")
+async def queue_volume_count(token_symbol: str, request: Request):
+    queue = request.app.state.volume_queue
+    future = get_or_create_volume_future(token_symbol.lower(), queue)
+
+    try:
+        result = await asyncio.wait_for(future, timeout=30)
+        return result
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Volume search timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Volume search failed: {e}")
