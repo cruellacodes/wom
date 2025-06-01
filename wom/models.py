@@ -1,6 +1,5 @@
 from sqlalchemy import Table, Column, String, Text, Integer, Float, Boolean, DateTime, ForeignKey, MetaData
 from datetime import datetime, timezone
-from sqlalchemy import Enum
 
 from enums import LaunchpadType
 
@@ -25,7 +24,7 @@ tokens = Table(
     Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)),
     Column("last_seen_at", DateTime(timezone=True), default=default),
     Column("is_active", Boolean, default=True),
-    Column("launchpad", Enum(LaunchpadType, name="launchpadtype"), nullable=False, default=LaunchpadType.UNKNOWN.value),
+    Column("launchpad", String, nullable=False, default=LaunchpadType.UNKNOWN.value),
     Column("avg_followers_count", Integer, nullable=True, default=0),
 )
 
