@@ -160,6 +160,7 @@ async def get_filtered_pairs():
             seen_symbols.add(symbol_with_dollar)
             pair_created_at = item.get("pairCreatedAt")
             age_string = format_token_age(pair_created_at) if pair_created_at else "N/A"
+            launchpad = detect_launchpad_from_address(base.get("address", ""))
 
             filtered_tokens.append({
                 "token_symbol": symbol_with_dollar,
@@ -171,6 +172,7 @@ async def get_filtered_pairs():
                 "market_cap_usd": mcap,
                 "priceChange1h": item.get("priceChange", {}).get("h1", 0),
                 "age": age_string,
+                "launchpad": launchpad
             })
 
         logging.info(f"[DONE] {len(filtered_tokens)} tokens passed filters: {[t['token_symbol'] for t in filtered_tokens]}")
