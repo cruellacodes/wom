@@ -487,6 +487,13 @@ async def run_tweet_pipeline():
         else:
             logging.info(f"[tweet_pipeline] Token: {token} processed.")
 
+def ensure_datetime(val):
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+    return None  # or raise
+
 async def run_score_pipeline():
     logging.info("Recalculating final WOM scores...")
 
@@ -497,12 +504,13 @@ async def run_score_pipeline():
     for token in active_tokens:
         try:
             stored = await fetch_stored_tweets(token)
-            valid = [
-                t for t in stored
-                if t["created_at"] and t["wom_score"] is not None and
-                t["created_at"] >= cutoff
-            ]
 
+            valid = []
+            for t in stored:
+                created_at = ensure_datetime(t.get("created_at"))
+                if created_at and t["wom_score"] is not None and created_at >= cutoff:
+                    t["created_at"] = created_at  # normalize for scoring function
+                    valid.append(t)
 
             if not valid:
                 logging.info(f"[{token}] No valid recent tweets, skipping score update.")
