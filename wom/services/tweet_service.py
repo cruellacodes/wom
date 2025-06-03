@@ -1,5 +1,4 @@
 import asyncio
-from asyncio.log import logger
 import os
 import httpx # type: ignore
 import logging
@@ -145,7 +144,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
 
         text = tweet.get("text")
         if text is None:
-            logger.warning(f"[{token_symbol}] Skipping tweet {tweet.get('tweet_id')} – text is None")
+            logging.warning(f"[{token_symbol}] Skipping tweet {tweet.get('tweet_id')} – text is None")
             continue  # skip processing this tweet
 
         user = tweet.get("user_info", {})
@@ -168,7 +167,7 @@ async def preprocess_tweets(raw_tweets, token_symbol, min_followers=150):
             processed.append(data)
 
     if not processed:
-        logger.warning(f"[{token_symbol}] No valid tweets after processing.")
+        logging.warning(f"[{token_symbol}] No valid tweets after processing.")
         return {}
 
     return {token_symbol: processed}
