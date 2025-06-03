@@ -343,6 +343,10 @@ async def recalculate_token_scores():
         await update_token_table(token, final_score, len(recent))
         logging.info(f"[{token}] WOM={final_score} from {len(recent)} tweets.")
 
+def volume_boost(count, mid=5):
+    return 1 / (1 + math.exp(-0.5 * (count - mid)))
+
+
 def compute_final_wom_score(tweets: list[dict]) -> float:
     """
     Compute the final WOM score for a list of tweets using exponential decay
@@ -370,10 +374,6 @@ def compute_final_wom_score(tweets: list[dict]) -> float:
     prior = 50.0
     confidence = 15
     smoothed = ((confidence * prior) + (len(tweets) * avg_score)) / (confidence + len(tweets))
-
-    # Volume weighting
-    def volume_boost(count, mid=5):
-        return 1 / (1 + math.exp(-0.5 * (count - mid)))
 
     volume_weight = volume_boost(len(tweets))
     final_score = smoothed * volume_weight
@@ -490,8 +490,13 @@ def ensure_datetime(val):
     if isinstance(val, datetime):
         return val
     if isinstance(val, str):
-        return datetime.fromisoformat(val.replace("Z", "+00:00"))
-    return None  # or raise
+        try:
+            return datetime.fromisoformat(val.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except Exception as e:
+            logging.warning(f"[DatetimeParse] Could not parse: {val} → {repr(e)}")
+            return None
+    return None
+
 
 async def prune_old_tweets():
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
@@ -531,34 +536,71 @@ async def update_avg_followers_count(token_symbol: str, tweets: list[dict]):
     await database.execute(stmt)
 
 async def run_score_pipeline():
-    logging.info("Recalculating final WOM scores...")
+    logging.info("🚀 Recalculating final WOM scores...")
 
     active_tokens = await fetch_active_tokens()
+    logging.info(f"Active tokens: {active_tokens}")
+
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=48)
+    logging.info(f"Cutoff time: {cutoff.isoformat()}")
 
     for token in active_tokens:
         try:
-            stored = await fetch_stored_tweets(token)
+            logging.info(f"\n\n🧪 Processing token: {token}")
+            stored_raw = await fetch_stored_tweets(token)
+
+            # Ensure each tweet is a proper dict
+            stored = [dict(tweet) for tweet in stored_raw]
+            logging.info(f"[{token}] Total stored tweets: {len(stored)}")
 
             valid = []
-            for t in stored:
-                created_at = ensure_datetime(t.get("created_at"))
-                if created_at and t["wom_score"] is not None and created_at >= cutoff:
-                    t["created_at"] = created_at  # normalize for scoring function
-                    valid.append(t)
+            for i, t in enumerate(stored):
+                raw_created_at = t.get("created_at")
+                wom_score = t.get("wom_score")
+
+                if raw_created_at is None:
+                    logging.warning(f"[{token}] Tweet {i} missing 'created_at'. Skipping.")
+                    continue
+
+                if wom_score is None:
+                    logging.warning(f"[{token}] Tweet {i} missing 'wom_score'. Skipping.")
+                    continue
+
+                try:
+                    created_at = ensure_datetime(raw_created_at)
+                except Exception as e:
+                    logging.error(f"[{token}] Failed to parse datetime: {raw_created_at} → {repr(e)}")
+                    continue
+
+                if created_at is None:
+                    logging.warning(f"[{token}] Parsed datetime is None: {raw_created_at}")
+                    continue
+
+                if created_at < cutoff:
+                    continue
+
+                t["created_at"] = created_at
+                valid.append(t)
+
+            logging.info(f"[{token}] Valid recent tweets: {len(valid)}")
 
             if not valid:
-                logging.info(f"[{token}] No valid recent tweets, skipping score update.")
+                logging.info(f"[{token}] No valid recent tweets. Skipping update.")
                 continue
 
+            # Compute final WOM score
             final_score = compute_final_wom_score(valid)
+            logging.info(f"[{token}] Final score: {final_score}")
+
             await update_token_table(token, final_score, len(valid))
+            logging.info(f"[{token}] Token table updated.")
+
             await update_avg_followers_count(token, valid)
-            logging.info(f"[{token}] Final WOM={final_score} from {len(valid)} tweets.")
+            logging.info(f"[{token}] avg_followers_count updated.")
 
         except Exception as e:
-            logging.error(f"[score_pipeline] Token: {token} → {repr(e)}")
+            logging.error(f"[ERROR] Token: {token} → {repr(e)}")
 
     await prune_old_tweets()
-    logging.info("Old tweets >48h pruned.")
+    logging.info("🧹 Old tweets >48h pruned.")
