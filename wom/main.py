@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
 
     # Start background workers
     tasks = [
-        make_loop(fetch_tokens, 900),
+        make_loop(fetch_tokens, 1800),
         make_loop(tweet_score_deactivate_pipeline, 120),
     ]
 
