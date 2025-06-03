@@ -493,6 +493,43 @@ def ensure_datetime(val):
         return datetime.fromisoformat(val.replace("Z", "+00:00"))
     return None  # or raise
 
+async def prune_old_tweets():
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    stmt = delete(tweets).where(tweets.c.created_at < cutoff)
+    await database.execute(stmt)
+
+async def handle_on_demand_search(token_symbol: str) -> dict:
+    raw_tweets = await fetch_last_Xh_tweets(token_symbol, hours=24)
+    processed = await preprocess_tweets(raw_tweets, token_symbol)
+    tweets = processed.get(token_symbol, [])
+
+    if not tweets:
+        return {"token_symbol": token_symbol, "tweets": [], "wom_score": 0.0}
+
+    sentiment_result = await get_sentiment({token_symbol: tweets})
+    scored = sentiment_result.get(token_symbol, {}).get("tweets", [])
+
+    for tweet in scored:
+        if isinstance(tweet["created_at"], str):
+            tweet["created_at"] = datetime.fromisoformat(tweet["created_at"])
+
+    score = compute_final_wom_score(scored)
+    return {"token_symbol": token_symbol, "tweets": scored, "wom_score": score}
+
+async def update_avg_followers_count(token_symbol: str, tweets: list[dict]):
+    if not tweets:
+        avg_followers = 0
+    else:
+        valid = [t.get("followers_count", 0) for t in tweets if t.get("followers_count") is not None]
+        avg_followers = sum(valid) // len(valid) if valid else 0
+
+    stmt = tokens.update().where(
+        tokens.c.token_symbol == token_symbol.lower()
+    ).values(
+        avg_followers_count=avg_followers
+    )
+    await database.execute(stmt)
+
 async def run_score_pipeline():
     logging.info("Recalculating final WOM scores...")
 
@@ -525,40 +562,3 @@ async def run_score_pipeline():
 
     await prune_old_tweets()
     logging.info("Old tweets >48h pruned.")
-
-async def prune_old_tweets():
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-    stmt = delete(tweets).where(tweets.c.created_at < cutoff)
-    await database.execute(stmt)
-
-async def handle_on_demand_search(token_symbol: str) -> dict:
-    raw_tweets = await fetch_last_Xh_tweets(token_symbol, hours=24)
-    processed = await preprocess_tweets(raw_tweets, token_symbol)
-    tweets = processed.get(token_symbol, [])
-
-    if not tweets:
-        return {"token_symbol": token_symbol, "tweets": [], "wom_score": 0.0}
-
-    sentiment_result = await get_sentiment({token_symbol: tweets})
-    scored = sentiment_result.get(token_symbol, {}).get("tweets", [])
-
-    for tweet in scored:
-        if isinstance(tweet["created_at"], str):
-            tweet["created_at"] = datetime.fromisoformat(tweet["created_at"])
-
-    score = compute_final_wom_score(scored)
-    return {"token_symbol": token_symbol, "tweets": scored, "wom_score": score}
-
-async def update_avg_followers_count(token_symbol: str, tweets: list[dict]):
-    if not tweets:
-        avg_followers = 0
-    else:
-        total = sum(t.get("followers_count", 0) for t in tweets if t.get("followers_count") is not None)
-        avg_followers = total // len(tweets)
-
-    stmt = tokens.update().where(
-        tokens.c.token_symbol == token_symbol.lower()
-    ).values(
-        avg_followers_count=avg_followers
-    )
-    await database.execute(stmt)
