@@ -601,6 +601,3 @@ async def run_score_pipeline():
 
         except Exception as e:
             logging.error(f"[ERROR] Token: {token} → {repr(e)}")
-            
-    await prune_old_tweets()
-    logging.info("Old tweets >48h pruned.")
