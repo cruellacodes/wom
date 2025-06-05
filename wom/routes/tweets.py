@@ -32,8 +32,6 @@ async def queue_search_on_demand(token_symbol: str, request: Request):
         raise HTTPException(status_code=504, detail="Search timed out")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-    from services.volume_service import get_or_create_volume_future
 
 @tweets_router.get("/volume/{token_symbol}")
 async def queue_volume_count(token_symbol: str, request: Request):
