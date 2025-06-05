@@ -13,7 +13,7 @@ from services.token_service import (
     delete_old_tokens,
 )
 from services.tweet_service import run_tweet_pipeline, run_score_pipeline
-from services.search_service import process_search_queue
+from services.tweet_service import prune_old_tweets
 from routes.tokens import tokens_router
 from routes.tweets import tweets_router
 
@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         make_loop(fetch_tokens, 1800),
         make_loop(tweet_score_deactivate_pipeline, 120),
+        make_loop(prune_old_tweets, 1800), 
     ]
 
     # Launch 5 parallel search processors
