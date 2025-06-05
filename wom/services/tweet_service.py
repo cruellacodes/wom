@@ -536,7 +536,7 @@ async def update_avg_followers_count(token_symbol: str, tweets: list[dict]):
     await database.execute(stmt)
 
 async def run_score_pipeline():
-    logging.info("🚀 Recalculating final WOM scores...")
+    logging.info("Recalculating final WOM scores...")
 
     active_tokens = await fetch_active_tokens()
     logging.info(f"Active tokens: {active_tokens}")
@@ -547,7 +547,7 @@ async def run_score_pipeline():
 
     for token in active_tokens:
         try:
-            logging.info(f"\n\n🧪 Processing token: {token}")
+            logging.info(f"\n\nProcessing token: {token}")
             stored_raw = await fetch_stored_tweets(token)
 
             # Ensure each tweet is a proper dict
@@ -602,5 +602,5 @@ async def run_score_pipeline():
         except Exception as e:
             logging.error(f"[ERROR] Token: {token} → {repr(e)}")
 
-    await prune_old_tweets()
-    logging.info("🧹 Old tweets >48h pruned.")
+    # await prune_old_tweets()
+    # logging.info("Old tweets >48h pruned.")
