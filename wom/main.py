@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         make_loop(fetch_tokens, 1800),
         make_loop(tweet_score_deactivate_pipeline, 120),
-        make_loop(prune_old_tweets, 1800), 
+        # make_loop(prune_old_tweets, 1800), 
     ]
 
     # Launch 5 parallel search processors
