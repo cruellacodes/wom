@@ -31,6 +31,8 @@ def detect_launchpad_from_address(address: str) -> str:
         return LaunchpadType.BONK.value
     if "BOOP" in addr_upper:
         return LaunchpadType.BOOP.value
+    if "BLV" in addr_upper:
+        return LaunchpadType.BELIEVE.value
 
     return LaunchpadType.UNKNOWN.value
 

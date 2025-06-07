@@ -5,3 +5,4 @@ class LaunchpadType(str, Enum):
     PUMPFUN = "pumpfun"
     BONK = "bonk"
     BOOP = "boop"
+    BELIEVE= "believe"
