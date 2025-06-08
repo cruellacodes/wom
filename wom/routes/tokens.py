@@ -3,6 +3,9 @@ from sqlalchemy import select, func # type: ignore
 from models import tokens
 from db import database
 from services.token_service import fetch_token_info_by_address, format_token_age
+from pydantic import BaseModel
+from services.token_service import store_tokens
+from services.tweet_service import run_tweet_pipeline, run_score_pipeline
 
 tokens_router = APIRouter()
 
@@ -53,4 +56,58 @@ async def search_token(token_address: str):
         "dexUrl": token_info.get("url", "#"),
         "imageUrl": token_info.get("info", {}).get("imageUrl"),
         "age": format_token_age(pair_created_at) if pair_created_at else "N/A",
+    }
+
+class TokenAddressList(BaseModel):
+    addresses: list[str]
+
+@tokens_router.post("/add-manual-tokens")
+async def add_manual_tokens(payload: TokenAddressList):
+    added_tokens = []
+    failed_tokens = []
+
+    for address in payload.addresses:
+        try:
+            token_info = await fetch_token_info_by_address(address.lower())
+
+            if not token_info or not isinstance(token_info, dict):
+                failed_tokens.append({"address": address, "reason": "Token not found"})
+                continue
+
+            base = token_info.get("baseToken", {})
+            liq = token_info.get("liquidity", {}).get("usd", 0)
+            mcap = token_info.get("marketCap", 0)
+            vol = token_info.get("volume", {}).get("h24", 0)
+
+            if liq < 50_000 or mcap < 200_000 or vol < 150_000:
+                failed_tokens.append({"address": address, "reason": "Below thresholds"})
+                continue
+
+            token_data = [{
+                "token_symbol": f"${base.get('symbol', '').strip().lower()}",
+                "token_name": base.get("name", "unknown"),
+                "image_url": token_info.get("info", {}).get("imageUrl", None),
+                "address": base.get("address", "N/A"),
+                "volume_usd": vol,
+                "liquidity_usd": liq,
+                "market_cap_usd": mcap,
+                "priceChange1h": token_info.get("priceChange", {}).get("h1", 0),
+                "age": format_token_age(token_info.get("pairCreatedAt", 0)) if token_info.get("pairCreatedAt") else "manual",
+                "launchpad": "manual"
+            }]
+
+            await store_tokens(token_data)
+            added_tokens.append(base.get("symbol", address))
+
+        except Exception as e:
+            failed_tokens.append({"address": address, "reason": str(e)})
+
+    # Optional: run tweet fetch + scoring
+    await run_tweet_pipeline()
+    await run_score_pipeline()
+
+    return {
+        "added": added_tokens,
+        "failed": failed_tokens,
+        "message": f"Processed {len(payload.addresses)} tokens"
     }
