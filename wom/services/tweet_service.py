@@ -5,7 +5,6 @@ import logging
 from dotenv import load_dotenv # type: ignore
 from datetime import datetime, timedelta, timezone
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TextClassificationPipeline
-from sqlalchemy.dialects.postgresql import insert # type: ignore
 from sqlalchemy import delete  # type: ignore
 import math
 import re
@@ -383,7 +382,6 @@ def compute_final_wom_score(tweets: list[dict]) -> float:
 # === Stateless fetching ===
 
 TWEET_TIME_WINDOW_HOURS = 48
-MAX_FETCH_PAGES = 10  # prevent infinite loops
 
 def normalize_created_at(raw_time: str) -> str | None:
     if not raw_time:
