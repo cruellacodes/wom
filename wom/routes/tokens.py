@@ -79,9 +79,6 @@ async def add_manual_tokens(payload: TokenAddressList):
             mcap = token_info.get("marketCap", 0)
             vol = token_info.get("volume", {}).get("h24", 0)
 
-            if liq < 50_000 or mcap < 200_000 or vol < 150_000:
-                failed_tokens.append({"address": address, "reason": "Below thresholds"})
-                continue
 
             token_data = [{
                 "token_symbol": f"${base.get('symbol', '').strip().lower()}",

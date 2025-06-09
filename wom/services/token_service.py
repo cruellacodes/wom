@@ -279,7 +279,7 @@ async def deactivate_low_activity_tokens():
     recent_counts = await database.fetch_all(recent_tweet_counts_query)
     tweet_count_map = {r["token_symbol"]: r["tweet_count_24h"] for r in recent_counts}
 
-    # Step 2: Get all active tokens and their metadata
+    # Step 2: Get all active tokens and their metadata (including launchpad)
     active_tokens_query = select([
         tokens.c.token_symbol,
         tokens.c.address,
@@ -287,6 +287,7 @@ async def deactivate_low_activity_tokens():
         tokens.c.tweet_count,
         tokens.c.volume_usd,
         tokens.c.market_cap_usd,
+        tokens.c.launchpad,
     ]).where(tokens.c.is_active == True)
 
     tokens_data = await database.fetch_all(active_tokens_query)
@@ -296,11 +297,16 @@ async def deactivate_low_activity_tokens():
 
     for token in tokens_data:
         symbol = token["token_symbol"]
+        launchpad = token["launchpad"]
         age_str = token["age"]
         tweet_count_total = token["tweet_count"]
         tweet_count_24h = tweet_count_map.get(symbol, 0)
         volume = token["volume_usd"] or 0
         market_cap = token["market_cap_usd"] or 0
+
+        # Skip deactivation if launchpad is 'boop' or 'believe'
+        if launchpad in ['boop', 'believe']:
+            continue
 
         age_hours = parse_age_to_hours(age_str)
 
