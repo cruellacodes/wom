@@ -26,6 +26,7 @@ tokens = Table(
     Column("is_active", Boolean, default=True),
     Column("launchpad", String, nullable=False, default=LaunchpadType.UNKNOWN.value),
     Column("avg_followers_count", Integer, nullable=True, default=0),
+    Column("first_spotted_by", String),
 )
 
 tweets = Table(
