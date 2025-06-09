@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from services.search_service import get_or_create_token_future
-# from services.volume_service import get_or_create_volume_future
+from services.volume_service import get_or_create_volume_future
 from services.tweet_service import TweetService, ServiceError, TextCleaner
 
 tweets_router = APIRouter()
@@ -89,26 +89,26 @@ async def queue_search_on_demand(token_symbol: str, request: Request):
         logging.error(f"Error in on-demand search for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# @tweets_router.get("/volume/{token_symbol}")
-# async def queue_volume_count(token_symbol: str, request: Request):
-#     """Queue a volume count request for a token"""
-#     try:
-#         # Check if volume queue exists
-#         if not hasattr(request.app.state, 'volume_queue'):
-#             raise HTTPException(status_code=503, detail="Volume queue not configured")
+@tweets_router.get("/volume/{token_symbol}")
+async def queue_volume_count(token_symbol: str, request: Request):
+    """Queue a volume count request for a token"""
+    try:
+        # Check if volume queue exists
+        if not hasattr(request.app.state, 'volume_queue'):
+            raise HTTPException(status_code=503, detail="Volume queue not configured")
         
-#         queue = request.app.state.volume_queue
-#         future = get_or_create_volume_future(token_symbol.lower(), queue)
+        queue = request.app.state.volume_queue
+        future = get_or_create_volume_future(token_symbol.lower(), queue)
 
-#         try:
-#             result = await asyncio.wait_for(future, timeout=30)
-#             return result
-#         except asyncio.TimeoutError:
-#             raise HTTPException(status_code=504, detail="Volume search timed out")
+        try:
+            result = await asyncio.wait_for(future, timeout=30)
+            return result
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="Volume search timed out")
             
-#     except Exception as e:
-#         logging.error(f"Error in volume search for {token_symbol}: {e}")
-#         raise HTTPException(status_code=500, detail=f"Volume search failed: {e}")
+    except Exception as e:
+        logging.error(f"Error in volume search for {token_symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Volume search failed: {e}")
 
 @tweets_router.post("/tweets/{token_symbol}/refresh")
 async def refresh_tweets_for_token(
