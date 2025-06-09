@@ -25,15 +25,15 @@ async def get_stored_tweets_endpoint(
             raise HTTPException(status_code=503, detail="Tweet service unavailable")
         
         # Normalize token symbol
-        normalized_token = TextCleaner.normalize_token(token_symbol)
+        token_symbol = TextCleaner.normalize_token(token_symbol)
         
         # Get tweets from database
-        tweets = await tweet_service.db_manager.get_recent_tweets(normalized_token, hours)
+        tweets = await tweet_service.db_manager.get_recent_tweets(token_symbol, hours)
         
         if not tweets:
             return {
                 "message": f"No stored tweets found for {token_symbol}",
-                "token_symbol": normalized_token,
+                "token_symbol": token_symbol,
                 "tweets": [],
                 "count": 0
             }
@@ -54,7 +54,7 @@ async def get_stored_tweets_endpoint(
             formatted_tweets.append(formatted_tweet)
         
         return {
-            "token_symbol": normalized_token,
+            "token_symbol": token_symbol,
             "tweets": formatted_tweets,
             "count": len(formatted_tweets),
             "hours_range": hours
@@ -120,30 +120,31 @@ async def refresh_tweets_for_token(
         if not tweet_service:
             raise HTTPException(status_code=503, detail="Tweet service unavailable")
         
-        normalized_token = TextCleaner.normalize_token(token_symbol)
+        if not token_symbol.startswith('$'):
+            token_symbol = f'${token_symbol}'
         
         # Check if token is active
         active_tokens = await tweet_service.db_manager.get_active_tokens()
-        if normalized_token not in active_tokens:
+        if token_symbol not in active_tokens:
             raise HTTPException(status_code=404, detail=f"Token {token_symbol} is not active")
         
         # Fetch and store tweets for this token
-        success = await tweet_service.fetch_and_store_tweets_for_token(normalized_token)
+        success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
         
         if success:
             # Recalculate WOM score for this token
-            await tweet_service._recalculate_token_wom_score(normalized_token)
+            await tweet_service._recalculate_token_wom_score(token_symbol)
             
             return {
                 "status": "success",
                 "message": f"Successfully refreshed tweets for {token_symbol}",
-                "token_symbol": normalized_token
+                "token_symbol": token_symbol
             }
         else:
             return {
                 "status": "no_new_data",
                 "message": f"No new tweets found for {token_symbol}",
-                "token_symbol": normalized_token
+                "token_symbol": token_symbol
             }
             
     except ServiceError as e:
@@ -153,6 +154,109 @@ async def refresh_tweets_for_token(
         raise  # Re-raise HTTP exceptions
     except Exception as e:
         logging.error(f"Error refreshing tweets for {token_symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@tweets_router.post("/tweets/{token_symbol}/run-pipeline")
+async def run_tweet_pipeline_for_token(
+    token_symbol: str,
+    request: Request,
+    tweet_service: Optional[TweetService] = Depends(get_tweet_service)
+):
+    """Run the complete tweet pipeline for a specific token symbol"""
+    try:
+        if not tweet_service:
+            raise HTTPException(status_code=503, detail="Tweet service unavailable")
+        
+        if not token_symbol.startswith('$'):
+            token_symbol = f'${token_symbol}'
+        
+        # Step 1: Ensure token is active (add if not exists)
+        try:
+            active_tokens = await tweet_service.db_manager.get_active_tokens()
+            if token_symbol not in active_tokens:
+                # Add token to active tokens if it doesn't exist
+                await tweet_service.db_manager.add_token(token_symbol)
+                logging.info(f"Added {token_symbol} to active tokens")
+        except Exception as e:
+            logging.warning(f"Could not verify/add token {token_symbol}: {e}")
+        
+        pipeline_results = {
+            "token_symbol": token_symbol,
+            "steps_completed": [],
+            "errors": []
+        }
+        
+        # Step 2: Run tweet pipeline - fetch and store tweets
+        try:
+            logging.info(f"Running tweet fetch pipeline for {token_symbol}")
+            
+            # Check if there are pipeline methods available on tweet_service
+            if hasattr(tweet_service, 'run_tweet_pipeline'):
+                await tweet_service.run_tweet_pipeline()
+                pipeline_results["steps_completed"].append("tweet_pipeline")
+            else:
+                # Fall back to individual token processing
+                success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
+                if success:
+                    pipeline_results["steps_completed"].append("tweet_fetch_and_store")
+                else:
+                    pipeline_results["errors"].append("No new tweets found during fetch")
+            
+        except Exception as e:
+            error_msg = f"Tweet pipeline failed: {str(e)}"
+            logging.error(error_msg)
+            pipeline_results["errors"].append(error_msg)
+        
+        # Step 3: Run score pipeline - calculate WOM scores
+        try:
+            logging.info(f"Running score pipeline for {token_symbol}")
+            
+            if hasattr(tweet_service, 'run_score_pipeline'):
+                await tweet_service.run_score_pipeline()
+                pipeline_results["steps_completed"].append("score_pipeline")
+            else:
+                # Fall back to individual token score calculation
+                await tweet_service._recalculate_token_wom_score(token_symbol)
+                pipeline_results["steps_completed"].append("wom_score_calculation")
+            
+        except Exception as e:
+            error_msg = f"Score pipeline failed: {str(e)}"
+            logging.error(error_msg)
+            pipeline_results["errors"].append(error_msg)
+        
+        # Step 4: Get final stats
+        try:
+            tweets = await tweet_service.db_manager.get_recent_tweets(token_symbol, 48)
+            pipeline_results["final_stats"] = {
+                "total_tweets": len(tweets),
+                "current_wom_score": tweet_service.wom_calculator.calculate_final_wom_score(tweets) if tweets else 0
+            }
+        except Exception as e:
+            pipeline_results["errors"].append(f"Could not fetch final stats: {str(e)}")
+        
+        # Determine overall status
+        if pipeline_results["steps_completed"]:
+            if pipeline_results["errors"]:
+                status = "partial_success"
+                message = f"Pipeline completed with some errors for {token_symbol}"
+            else:
+                status = "success"
+                message = f"Pipeline completed successfully for {token_symbol}"
+        else:
+            status = "failed"
+            message = f"Pipeline failed for {token_symbol}"
+        
+        return {
+            "status": status,
+            "message": message,
+            **pipeline_results
+        }
+        
+    except ServiceError as e:
+        logging.error(f"Service error running pipeline for {token_symbol}: {e}")
+        raise HTTPException(status_code=503, detail="Tweet service error")
+    except Exception as e:
+        logging.error(f"Error running pipeline for {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @tweets_router.get("/tweets/{token_symbol}/stats")
@@ -165,15 +269,16 @@ async def get_tweet_stats(
     try:
         if not tweet_service:
             raise HTTPException(status_code=503, detail="Tweet service unavailable")
-        
-        normalized_token = TextCleaner.normalize_token(token_symbol)
+
+        if not token_symbol.startswith('$'):
+            token_symbol = f'${token_symbol}'
         
         # Get recent tweets
-        tweets = await tweet_service.db_manager.get_recent_tweets(normalized_token, hours)
+        tweets = await tweet_service.db_manager.get_recent_tweets(token_symbol, hours)
         
         if not tweets:
             return {
-                "token_symbol": normalized_token,
+                "token_symbol": token_symbol,
                 "stats": {
                     "total_tweets": 0,
                     "avg_wom_score": 0,
@@ -205,7 +310,7 @@ async def get_tweet_stats(
             oldest_tweet = newest_tweet = None
         
         return {
-            "token_symbol": normalized_token,
+            "token_symbol": token_symbol,
             "stats": {
                 "total_tweets": total_tweets,
                 "unique_users": unique_users,
