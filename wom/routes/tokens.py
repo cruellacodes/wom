@@ -93,7 +93,7 @@ async def add_manual_tokens(payload: TokenAddressList):
                 "market_cap_usd": mcap,
                 "priceChange1h": token_info.get("priceChange", {}).get("h1", 0),
                 "age": format_token_age(token_info.get("pairCreatedAt", 0)) if token_info.get("pairCreatedAt") else "manual",
-                "launchpad": "manual"
+                "launchpad": "believe"
             }]
 
             await store_tokens(token_data)
@@ -102,7 +102,6 @@ async def add_manual_tokens(payload: TokenAddressList):
         except Exception as e:
             failed_tokens.append({"address": address, "reason": str(e)})
 
-    # Optional: run tweet fetch + scoring
     await run_tweet_pipeline()
     await run_score_pipeline()
 

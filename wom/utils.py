@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+import logging
 import re
 from typing import Callable, List
 
@@ -29,3 +31,17 @@ FILTER_RULES: List[Callable[[str], bool]] = [
 
 def is_relevant_tweet(tweet_text: str) -> bool:
     return not any(rule(tweet_text) for rule in FILTER_RULES)
+
+def parse_datetime(val):
+    """Return an aware datetime or None (safe)."""
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        try:
+            return datetime.fromisoformat(val.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except Exception as e:
+            logging.warning(f"[DatetimeParse] Could not parse: {val} → {e!r}")
+    return None                   
+
+# Back-compat shim so legacy calls don’t break
+ensure_datetime = parse_datetime
