@@ -12,7 +12,7 @@ from services.token_service import (
     deactivate_low_activity_tokens,
     delete_old_tokens,
 )
-# Updated imports for new tweet service
+
 from services.tweet_service import TweetService, ServiceError
 from routes.tokens import tokens_router
 from routes.tweets import tweets_router
@@ -36,7 +36,7 @@ def make_loop(fn, interval_seconds):
             await asyncio.sleep(max(0, interval_seconds - elapsed))
     task = asyncio.create_task(_loop())
     
-    # Add crash monitoring
+    # crash monitoring
     def handle_crash(task):
         try:
             task.result()
@@ -52,12 +52,12 @@ def make_loop(fn, interval_seconds):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from services.search_service import process_search_queue 
+    from services.volume_service import process_volume_queue 
 
     # Connect to DB
     await database.connect()
     logging.info("Connected to database.")
 
-    # Initialize tweet service
     tweet_service = TweetService()
     try:
         await tweet_service.initialize()
@@ -65,15 +65,16 @@ async def lifespan(app: FastAPI):
         logging.info("Tweet service initialized successfully.")
     except ServiceError as e:
         logging.error(f"Failed to initialize tweet service: {e}")
-        # You might want to decide if the app should continue without tweet service
-        # For now, we'll continue but log the error
         app.state.tweet_service = None
 
-    # Create in-memory async queue
+    # Create in-memory async queues
     search_queue = asyncio.Queue(maxsize=100)  
     app.state.search_queue = search_queue
+    
+    volume_queue = asyncio.Queue(maxsize=50)
+    app.state.volume_queue = volume_queue
 
-    # Start background workers
+    # background workers
     tasks = [
         make_loop(fetch_tokens, 1800),  # 30 minutes
         make_loop(lambda: tweet_score_deactivate_pipeline(app.state.tweet_service), 120),  # 2 minutes
@@ -83,6 +84,10 @@ async def lifespan(app: FastAPI):
     # Launch 5 parallel search processors
     for i in range(5):
         tasks.append(make_loop(lambda: process_search_queue(search_queue), 1))
+    
+    # Launch 3 parallel volume processors
+    for i in range(3):
+        tasks.append(make_loop(lambda: process_volume_queue(volume_queue, app.state.tweet_service), 1))
 
     yield
 
@@ -134,12 +139,12 @@ async def tweet_score_deactivate_pipeline(tweet_service: TweetService):
         await tweet_service.run_tweet_pipeline()
         await tweet_service.run_score_pipeline()
         
-        # Run token deactivation (from your existing service)
+        # Run token deactivation
         await deactivate_low_activity_tokens()
         
     except ServiceError as e:
         logging.error(f"Tweet pipeline failed: {e}")
-        # Don't re-raise - let the loop continue
+
     except Exception as e:
         logging.error(f"Unexpected error in tweet pipeline: {e}", exc_info=True)
 
@@ -153,68 +158,13 @@ async def maintenance_pipeline(tweet_service: TweetService):
         # Run tweet service maintenance
         await tweet_service.run_maintenance()
         
-        # Run token cleanup (from your existing service)
+        # Run token cleanup 
         await delete_old_tokens()
         
     except ServiceError as e:
         logging.error(f"Maintenance pipeline failed: {e}")
     except Exception as e:
         logging.error(f"Unexpected error in maintenance pipeline: {e}", exc_info=True)
-
-# === Optional: Additional endpoints for manual control ===
-
-@app.post("/admin/tweet-pipeline")
-async def manual_tweet_pipeline():
-    """Manually trigger tweet pipeline (admin endpoint)"""
-    if not hasattr(app.state, 'tweet_service') or not app.state.tweet_service:
-        return {"error": "Tweet service not available"}
-    
-    try:
-        await app.state.tweet_service.run_tweet_pipeline()
-        return {"status": "success", "message": "Tweet pipeline completed"}
-    except ServiceError as e:
-        return {"error": f"Pipeline failed: {e}"}
-
-@app.post("/admin/score-pipeline")
-async def manual_score_pipeline():
-    """Manually trigger score calculation pipeline (admin endpoint)"""
-    if not hasattr(app.state, 'tweet_service') or not app.state.tweet_service:
-        return {"error": "Tweet service not available"}
-    
-    try:
-        await app.state.tweet_service.run_score_pipeline()
-        return {"status": "success", "message": "Score pipeline completed"}
-    except ServiceError as e:
-        return {"error": f"Pipeline failed: {e}"}
-
-@app.post("/admin/maintenance")
-async def manual_maintenance():
-    """Manually trigger maintenance tasks (admin endpoint)"""
-    if not hasattr(app.state, 'tweet_service') or not app.state.tweet_service:
-        return {"error": "Tweet service not available"}
-    
-    try:
-        await app.state.tweet_service.run_maintenance()
-        return {"status": "success", "message": "Maintenance completed"}
-    except ServiceError as e:
-        return {"error": f"Maintenance failed: {e}"}
-
-@app.get("/admin/service-status")
-async def service_status():
-    """Get detailed service status (admin endpoint)"""
-    return {
-        "tweet_service": {
-            "available": hasattr(app.state, 'tweet_service') and app.state.tweet_service is not None,
-            "initialized": hasattr(app.state, 'tweet_service') and getattr(app.state.tweet_service, '_initialized', False) if hasattr(app.state, 'tweet_service') else False
-        },
-        "database": {
-            "connected": database.is_connected
-        },
-        "search_queue": {
-            "size": app.state.search_queue.qsize() if hasattr(app.state, 'search_queue') else 0,
-            "available": hasattr(app.state, 'search_queue')
-        }
-    }
 
 # Include routers
 app.include_router(tokens_router)
