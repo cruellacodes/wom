@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 
     # background workers
     tasks = [
-        make_loop(fetch_tokens, 1800),  # 30 minutes
+        make_loop(fetch_tokens, 1800), 
         make_loop(lambda: tweet_score_deactivate_pipeline(app.state.tweet_service), 120),  # 2 minutes
         make_loop(lambda: maintenance_pipeline(app.state.tweet_service), 1800),  # 30 minutes
     ]
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
     
     # Launch 3 parallel volume processors
     for i in range(3):
-        tasks.append(make_loop(lambda: process_volume_queue(volume_queue, app.state.tweet_service), 1))
+        tasks.append(make_loop(lambda: process_volume_queue(volume_queue), 1))
 
     yield
 
