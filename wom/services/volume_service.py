@@ -19,12 +19,12 @@ VOLUME_CACHE_DURATION = 300  # 5 minutes
 @lru_cache()
 def get_volume_api_config() -> Dict[str, any]:
     """Get API configuration for volume service"""
-    rapidapi_key = os.getenv("RAPIDAPI_SEARCH_ONLY_KEY")
-    rapidapi_host = os.getenv("RAPIDAPI_SEARCH_ONLY_HOST", "twitter-api45.p.rapidapi.com")
-    api_url = os.getenv("RAPIDAPI_SEARCH_ONLY_URL", f"https://{rapidapi_host}/search.php")
+    rapidapi_key = os.getenv("RAPIDAPI_KEY")
+    rapidapi_host = os.getenv("RAPIDAPI_HOST", "twitter241.p.rapidapi.com")
+    api_url = f"https://{rapidapi_host}/v2/search"
     
     if not rapidapi_key:
-        raise ValueError("RAPIDAPI_SEARCH_ONLY_KEY environment variable is required")
+        raise ValueError("RAPIDAPI_KEY environment variable is required")
     
     return {
         "url": api_url,
@@ -114,7 +114,6 @@ async def _fetch_all_48h_tweets(token_symbol: str) -> List[Dict]:
     config = get_volume_api_config()
     all_tweets = []
     seen_ids = set()
-    seen_cursors = set()
     cursor = None
     pages = 0
     
@@ -126,14 +125,6 @@ async def _fetch_all_48h_tweets(token_symbol: str) -> List[Dict]:
     
     while pages < config["max_pages"]:
         try:
-            # Detect cursor cycles
-            if cursor and cursor in seen_cursors:
-                logging.warning(f"[volume] Cursor cycle detected for {token_symbol}, breaking")
-                break
-            
-            if cursor:
-                seen_cursors.add(cursor)
-            
             # Fetch page
             page_tweets, next_cursor = await _fetch_tweets_page(token_symbol, cursor)
             
@@ -203,7 +194,7 @@ async def _fetch_all_48h_tweets(token_symbol: str) -> List[Dict]:
     return filtered_by_time
 
 async def _fetch_tweets_page(token_symbol: str, cursor: Optional[str] = None, retries: int = 0) -> tuple[List[Dict], Optional[str]]:
-    """Fetch a single page of tweets"""
+    """Fetch a single page of tweets using the actual API structure"""
     config = get_volume_api_config()
     
     async with aiohttp.ClientSession() as session:
@@ -211,16 +202,16 @@ async def _fetch_tweets_page(token_symbol: str, cursor: Optional[str] = None, re
             # Remove $ prefix to get clean token for API query construction
             clean_token = token_symbol.replace("$", "").strip()
             
-            # Choose prefix based on token length - use # for longer tokens, $ for shorter
-            query_prefix = "#" if len(clean_token) > 6 else "$"
-            query = f"{query_prefix}{clean_token}"
+            # Use $ prefix for the search query
+            query = f"${clean_token}"
             
             params = {
                 "query": query,
-                "count": str(config["tweets_per_page"]),
+                "count": config["tweets_per_page"],
                 "result_type": "recent"
             }
             
+            # Add cursor for pagination if available
             if cursor:
                 params["cursor"] = cursor
             
@@ -238,33 +229,99 @@ async def _fetch_tweets_page(token_symbol: str, cursor: Optional[str] = None, re
                     await asyncio.sleep(wait_time)
                     return await _fetch_tweets_page(token_symbol, cursor, retries + 1)
                 
-                response.raise_for_status()
-                data = await response.json()
+                # Check content type and handle empty responses
+                content_type = response.headers.get('content-type', '').lower()
+                if 'application/json' not in content_type:
+                    logging.error(f"[volume_api] Unexpected content type for {token_symbol}: {content_type}")
+                    return [], None
                 
-                # Parse response
+                response_text = await response.text()
+                if not response_text or response_text.strip() == '':
+                    logging.warning(f"[volume_api] Empty response body for {token_symbol}")
+                    return [], None
+                
+                try:
+                    data = await response.json()
+                except Exception as json_error:
+                    logging.error(f"[volume_api] JSON parsing failed for {token_symbol}: {json_error}")
+                    return [], None
+                
+                if data is None or not isinstance(data, dict):
+                    logging.warning(f"[volume_api] Invalid response structure for {token_symbol}")
+                    return [], None
+                
+                response.raise_for_status()
+                
+                # Parse the actual API response structure
                 tweets = []
                 next_cursor = None
                 
-                # Extract tweets from timeline
-                timeline = data.get("timeline", [])
+                # Navigate through the actual response structure
+                result = data.get("result", {})
+                timeline = result.get("timeline", {})
+                instructions = timeline.get("instructions", [])
                 
-                for item in timeline:
-                    if item.get("type") == "tweet":
-                        user_info = item.get("user_info", {})
+                for instruction in instructions:
+                    if instruction.get("type") == "TimelineAddEntries":
+                        entries = instruction.get("entries", [])
                         
-                        tweet = {
-                            "tweet_id": item.get("tweet_id"),
-                            "text": item.get("text", ""),
-                            "created_at": item.get("created_at"),
-                            "user": {
-                                "screen_name": user_info.get("screen_name", ""),
-                                "followers_count": user_info.get("followers_count", 0),
-                                "profile_image_url": user_info.get("avatar", "")
+                        for entry in entries:
+                            entry_id = entry.get("entryId", "")
+                            
+                            # Handle cursor entries for pagination
+                            if entry_id.startswith("cursor-bottom-"):
+                                content = entry.get("content", {})
+                                if content.get("entryType") == "TimelineTimelineCursor":
+                                    next_cursor = content.get("value")
+                                continue
+                                
+                            # Skip top cursor and other non-tweet entries
+                            if entry_id.startswith("cursor-") or not entry_id.startswith("tweet-"):
+                                continue
+                                
+                            content = entry.get("content", {})
+                            if content.get("entryType") != "TimelineTimelineItem":
+                                continue
+                                
+                            item_content = content.get("itemContent", {})
+                            if item_content.get("itemType") != "TimelineTweet":
+                                continue
+                            
+                            tweet_results = item_content.get("tweet_results", {})
+                            tweet_result = tweet_results.get("result", {})
+                            
+                            if tweet_result.get("__typename") != "Tweet":
+                                continue
+                            
+                            # Extract tweet data
+                            legacy = tweet_result.get("legacy", {})
+                            core = tweet_result.get("core", {})
+                            user_results = core.get("user_results", {})
+                            user_result = user_results.get("result", {})
+                            user_legacy = user_result.get("legacy", {})
+                            
+                            # Parse created_at
+                            created_at_str = legacy.get("created_at")
+                            if not created_at_str:
+                                continue
+                            
+                            # Extract tweet text
+                            text = legacy.get("full_text", "")
+                            if not text:
+                                continue
+                            
+                            # Create tweet object in expected format
+                            tweet = {
+                                "tweet_id": legacy.get("id_str"),
+                                "text": text,
+                                "created_at": created_at_str,
+                                "user": {
+                                    "screen_name": user_legacy.get("screen_name", ""),
+                                    "followers_count": user_legacy.get("followers_count", 0),
+                                    "profile_image_url": user_legacy.get("profile_image_url_https", "")
+                                }
                             }
-                        }
-                        tweets.append(tweet)
-                    elif item.get("type") == "cursor":
-                        next_cursor = item.get("value")
+                            tweets.append(tweet)
                 
                 return tweets, next_cursor
                 
@@ -275,7 +332,11 @@ async def _fetch_tweets_page(token_symbol: str, cursor: Optional[str] = None, re
                 await asyncio.sleep(wait_time)
                 return await _fetch_tweets_page(token_symbol, cursor, retries + 1)
             else:
-                raise Exception(f"API request failed after {retries} retries: {e}")
+                logging.error(f"[volume_api] API request failed after {retries} retries: {e}")
+                return [], None
+        except Exception as e:
+            logging.error(f"[volume_api] Unexpected error for {token_symbol}: {e}")
+            return [], None
 
 def _filter_tweets_for_volume(tweets: List[Dict]) -> List[Dict]:
     """Filter tweets using the same criteria as tweet service but without sentiment analysis"""
@@ -396,3 +457,92 @@ async def clear_volume_cache():
     
     logging.info(f"[volume_cache] Cleared {cleared_count} in-progress searches and {cleared_cache} cached results")
     return {"cleared_searches": cleared_count, "cleared_cache_entries": cleared_cache}
+
+# Add debugging function for volume service
+async def debug_volume_api_response(token_symbol: str = "ibrl") -> dict:
+    """Debug function to inspect what the volume API actually returns"""
+    config = get_volume_api_config()
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            clean_token = token_symbol.replace("$", "").strip()
+            query = f"${clean_token}"
+            
+            params = {
+                "query": query,
+                "count": 5,  # Small count for testing
+                "result_type": "recent"
+            }
+            
+            logging.info(f"[volume_debug] Making request to: {config['url']}")
+            logging.info(f"[volume_debug] Headers: {config['headers']}")
+            logging.info(f"[volume_debug] Params: {params}")
+            
+            async with session.get(
+                config["url"],
+                headers=config["headers"],
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=config["timeout"])
+            ) as response:
+                
+                logging.info(f"[volume_debug] Response status: {response.status}")
+                logging.info(f"[volume_debug] Response headers: {dict(response.headers)}")
+                
+                # Get raw response text first
+                response_text = await response.text()
+                logging.info(f"[volume_debug] Raw response length: {len(response_text)}")
+                logging.info(f"[volume_debug] Raw response preview: {response_text[:1000]}")
+                
+                # Try to parse as JSON
+                try:
+                    if response_text:
+                        import json
+                        data = json.loads(response_text)
+                        
+                        # Check for pagination cursors
+                        result = data.get("result", {})
+                        timeline = result.get("timeline", {})
+                        instructions = timeline.get("instructions", [])
+                        
+                        cursor_info = {}
+                        tweet_count = 0
+                        
+                        for instruction in instructions:
+                            if instruction.get("type") == "TimelineAddEntries":
+                                entries = instruction.get("entries", [])
+                                for entry in entries:
+                                    entry_id = entry.get("entryId", "")
+                                    if entry_id.startswith("cursor-"):
+                                        content = entry.get("content", {})
+                                        cursor_info[entry_id] = content.get("value")
+                                    elif entry_id.startswith("tweet-"):
+                                        tweet_count += 1
+                        
+                        return {
+                            "status": "success",
+                            "response_length": len(response_text),
+                            "data_type": str(type(data)),
+                            "data_keys": list(data.keys()) if isinstance(data, dict) else None,
+                            "tweet_count": tweet_count,
+                            "cursor_info": cursor_info,
+                            "sample_data": data
+                        }
+                    else:
+                        return {
+                            "status": "empty_response",
+                            "response_length": 0,
+                            "message": "API returned empty response"
+                        }
+                except json.JSONDecodeError as e:
+                    return {
+                        "status": "json_error",
+                        "error": str(e),
+                        "response_preview": response_text[:500]
+                    }
+                
+        except Exception as e:
+            logging.error(f"[volume_debug] Error: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
