@@ -32,6 +32,10 @@ class Config:
     MAX_TWEETS_PER_FETCH = 200
     TWEETS_PER_PAGE = 20
     
+    # Optimized fetching for frequent runs
+    MAX_OPTIMIZED_PAGES = 3
+    OPTIMIZED_TIME_BUFFER_MINUTES = 5
+    
     # Filtering
     MIN_FOLLOWERS = 150
     MAX_MEMORY_CACHE_SIZE = 10000
@@ -240,7 +244,7 @@ class SentimentAnalyzer:
 
 # === API Client ===
 class TwitterAPIClient:
-    """Handles Twitter API interactions with proper rate limiting and error handling"""
+    """Enhanced Twitter API client with optimized fetching for frequent runs"""
     
     def __init__(self):
         self.semaphore = asyncio.Semaphore(Config.RATE_LIMIT)
@@ -257,7 +261,7 @@ class TwitterAPIClient:
             yield
     
     async def fetch_tweets(self, token_symbol: str, cursor: Optional[str] = None) -> Tuple[List[RawTweet], Optional[str]]:
-        """Fetch tweets for a token symbol with proper error handling"""
+        """Original method for full fetch - kept for compatibility and initial setup"""
         if not token_symbol:
             raise ValidationError("Token symbol cannot be empty")
         
@@ -268,6 +272,89 @@ class TwitterAPIClient:
         query_prefix = "#" if len(clean_token) > 6 else "$"
         query = f"{query_prefix}{clean_token}"
         
+        return await self._fetch_tweets_page(query, cursor)
+    
+    async def fetch_recent_tweets_optimized(self, token_symbol: str, last_seen_tweet_id: Optional[str] = None) -> List[RawTweet]:
+        """
+        Optimized method for minute-by-minute fetching
+        Only fetches tweets newer than last_seen_tweet_id
+        """
+        clean_token = token_symbol.replace("$", "").strip()
+        query_prefix = "#" if len(clean_token) > 6 else "$"
+        query = f"{query_prefix}{clean_token}"
+        
+        logger.info(f"Fetching recent tweets for '{query}' (last seen: {last_seen_tweet_id})")
+        
+        all_tweets = []
+        seen_ids = set()
+        cursor = None
+        pages = 0
+        
+        # Calculate cutoff time (only last few minutes)
+        cutoff_time = DateTimeHandler.now() - timedelta(minutes=Config.OPTIMIZED_TIME_BUFFER_MINUTES)
+        last_seen_id_int = int(last_seen_tweet_id) if last_seen_tweet_id else 0
+        
+        while pages < Config.MAX_OPTIMIZED_PAGES:
+            try:
+                page_tweets, next_cursor = await self._fetch_tweets_page(query, cursor)
+                
+                if not page_tweets:
+                    logger.debug(f"No more tweets available for '{query}' after {pages} pages")
+                    break
+                
+                new_tweets_in_page = []
+                should_stop = False
+                
+                for tweet in page_tweets:
+                    # Skip duplicates
+                    if tweet.tweet_id in seen_ids:
+                        continue
+                    
+                    current_id_int = int(tweet.tweet_id)
+                    
+                    # Stop if we've reached tweets we already processed
+                    if current_id_int <= last_seen_id_int:
+                        logger.debug(f"Reached previously seen tweet {tweet.tweet_id}")
+                        should_stop = True
+                        break
+                    
+                    # Skip tweets older than our window (but continue processing this page)
+                    if tweet.created_at < cutoff_time:
+                        logger.debug(f"Tweet {tweet.tweet_id} is older than {Config.OPTIMIZED_TIME_BUFFER_MINUTES} minutes")
+                        continue
+                    
+                    new_tweets_in_page.append(tweet)
+                    seen_ids.add(tweet.tweet_id)
+                
+                all_tweets.extend(new_tweets_in_page)
+                pages += 1
+                
+                logger.debug(f"Page {pages}: {len(new_tweets_in_page)} new tweets")
+                
+                # Stop if we hit previously seen tweets or no new tweets
+                if should_stop or len(new_tweets_in_page) == 0:
+                    logger.debug(f"Stopping: reached known tweets or no new tweets")
+                    break
+                
+                if not next_cursor:
+                    logger.debug(f"No more pages available")
+                    break
+                
+                cursor = next_cursor
+                await asyncio.sleep(0.05)  # Short delay between pages
+                
+            except Exception as e:
+                logger.error(f"Error on page {pages + 1} for '{query}': {e}")
+                break
+        
+        # Sort by creation time (newest first)
+        all_tweets.sort(key=lambda x: x.created_at, reverse=True)
+        
+        logger.info(f"Fetched {len(all_tweets)} recent tweets for '{query}' from {pages} pages")
+        return all_tweets
+    
+    async def _fetch_tweets_page(self, query: str, cursor: Optional[str] = None) -> Tuple[List[RawTweet], Optional[str]]:
+        """Fetch a single page of tweets - shared logic for both methods"""
         url = f"https://{self.rapidapi_host}/search"
         headers = {
             "x-rapidapi-key": self.rapidapi_key,
@@ -290,25 +377,25 @@ class TwitterAPIClient:
                         
                         if response.status_code == 429:
                             delay = Config.INITIAL_RETRY_DELAY * (2 ** attempt)
-                            logger.warning(f"Rate limited for {token_symbol}, retrying in {delay}s...")
+                            logger.warning(f"Rate limited for query '{query}', retrying in {delay}s...")
                             await asyncio.sleep(delay)
                             continue
                         
                         response.raise_for_status()
-                        return self._parse_api_response(response.json(), token_symbol)
+                        return self._parse_api_response(response.json(), query)
                         
                 except httpx.HTTPStatusError as e:
-                    logger.error(f"HTTP error for {token_symbol}: {e.response.status_code}")
+                    logger.error(f"HTTP error for query '{query}': {e.response.status_code}")
                     if attempt == Config.MAX_RETRIES - 1:
                         raise APIError(f"HTTP error: {e.response.status_code}")
                         
                 except httpx.RequestError as e:
-                    logger.warning(f"Request error for {token_symbol}: {e}")
+                    logger.warning(f"Request error for query '{query}': {e}")
                     if attempt == Config.MAX_RETRIES - 1:
                         raise APIError(f"Request error: {e}")
                         
                 except Exception as e:
-                    logger.error(f"Unexpected error for {token_symbol}: {e}")
+                    logger.error(f"Unexpected error for query '{query}': {e}")
                     if attempt == Config.MAX_RETRIES - 1:
                         raise APIError(f"Unexpected error: {e}")
                 
@@ -343,6 +430,11 @@ class TwitterAPIClient:
                 # Extract tweet data
                 item = content.get("itemContent", {})
                 tweet_result = item.get("tweet_results", {}).get("result", {})
+                
+                # Handle different result types
+                if tweet_result.get("__typename") == "TweetWithVisibilityResults":
+                    tweet_result = tweet_result.get("tweet", {})
+                
                 legacy = tweet_result.get("legacy", {})
                 user = (tweet_result.get("core", {})
                        .get("user_results", {})
@@ -388,11 +480,11 @@ class TwitterAPIClient:
                 )
                 tweets.append(raw_tweet)
             
-            logger.info(f"Parsed {len(tweets)} tweets for {token_symbol}")
+            logger.debug(f"Parsed {len(tweets)} tweets for query '{token_symbol}'")
             return tweets, next_cursor
             
         except Exception as e:
-            logger.error(f"Failed to parse API response for {token_symbol}: {e}")
+            logger.error(f"Failed to parse API response for query '{token_symbol}': {e}")
             raise APIError(f"Response parsing failed: {e}")
 
 # === Tweet Processing ===
@@ -467,7 +559,7 @@ class TweetProcessor:
 
 # === Database Operations ===
 class DatabaseManager:
-    """Handles all database operations with proper transaction management"""
+    """Enhanced database manager with optimizations for frequent runs"""
     
     async def get_active_tokens(self) -> List[str]:
         """Fetch all active token symbols"""
@@ -478,6 +570,28 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to fetch active tokens: {e}")
             raise DatabaseError(f"Failed to fetch active tokens: {e}")
+    
+    async def get_last_seen_tweet_id(self, token_symbol: str) -> Optional[str]:
+        """Get the most recent tweet ID for a token to avoid refetching"""
+        try:
+            # Ensure token has $ prefix for database lookup
+            if not token_symbol.startswith('$'):
+                token_symbol = f'${token_symbol}'
+                
+            query = """
+                SELECT tweet_id 
+                FROM tweets 
+                WHERE token_symbol = :token_symbol 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            """
+            
+            result = await database.fetch_one(query, {"token_symbol": token_symbol})
+            return result["tweet_id"] if result else None
+            
+        except Exception as e:
+            logger.error(f"Failed to get last seen tweet ID for {token_symbol}: {e}")
+            return None
     
     async def get_existing_tweet_ids(self, token_symbol: str) -> set:
         """Get existing tweet IDs for a token to avoid duplicates"""
@@ -689,7 +803,7 @@ class WOMCalculator:
 
 # === Main Service ===
 class TweetService:
-    """Main service orchestrating all tweet operations"""
+    """Enhanced Tweet service with both full fetch and optimized incremental fetch capabilities"""
     
     def __init__(self):
         self.api_client = TwitterAPIClient()
@@ -703,12 +817,46 @@ class TweetService:
         await self.sentiment_analyzer.initialize()
         logger.info("Tweet service initialized successfully")
     
+    async def fetch_and_store_tweets_for_token_optimized(self, token_symbol: str) -> bool:
+        """
+        Optimized method for frequent runs - only fetch recent tweets
+        Uses last seen tweet ID to avoid duplicates
+        """
+        try:
+            logger.debug(f"Processing recent tweets for token: {token_symbol}")
+            
+            # Get the last tweet ID we processed to avoid duplicates
+            last_seen_tweet_id = await self.db_manager.get_last_seen_tweet_id(token_symbol)
+            
+            # Fetch only recent tweets using optimized method
+            raw_tweets = await self.api_client.fetch_recent_tweets_optimized(token_symbol, last_seen_tweet_id)
+            
+            if not raw_tweets:
+                logger.debug(f"No new tweets found for {token_symbol}")
+                return False
+            
+            # Process tweets (filtering happens in tweet processor)
+            processed_tweets = await self.tweet_processor.process_tweets(raw_tweets, token_symbol)
+            if not processed_tweets:
+                logger.debug(f"No tweets passed processing for {token_symbol}")
+                return False
+            
+            # Store new tweets (they should all be new since we used last_seen_tweet_id)
+            stored_count = await self.db_manager.store_tweets(processed_tweets)
+            logger.info(f"Stored {stored_count} new tweets for {token_symbol}")
+            
+            return stored_count > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to process tweets for {token_symbol}: {e}")
+            return False
+    
     async def fetch_and_store_tweets_for_token(self, token_symbol: str) -> bool:
-        """Fetch and store tweets for a single token"""
+        """Original method for full fetch - kept for compatibility and initial token setup"""
         try:
             logger.info(f"Processing tweets for token: {token_symbol}")
             
-            # Fetch tweets from API
+            # Fetch tweets from API (full fetch)
             raw_tweets = await self._fetch_all_recent_tweets(token_symbol)
             if not raw_tweets:
                 logger.info(f"No recent tweets found for {token_symbol}")
@@ -742,7 +890,7 @@ class TweetService:
             return False
     
     async def _fetch_all_recent_tweets(self, token_symbol: str) -> List[RawTweet]:
-        """Fetch all recent tweets for a token with pagination"""
+        """Fetch all recent tweets for a token with pagination - original full fetch method"""
         all_tweets = []
         seen_ids = set()
         seen_cursors = set()
@@ -830,7 +978,7 @@ class TweetService:
             recent_tweets = await self.db_manager.get_recent_tweets(token_symbol)
             
             if not recent_tweets:
-                logger.info(f"No recent tweets found for {token_symbol}, skipping WOM update")
+                logger.debug(f"No recent tweets found for {token_symbol}, skipping WOM update")
                 return
             
             # Calculate metrics
@@ -854,7 +1002,7 @@ class TweetService:
                 first_spotted_by=first_spotted_by
             )
             
-            logger.info(f"Updated {token_symbol}: WOM={wom_score}, tweets={len(recent_tweets)}, avg_followers={avg_followers}")
+            logger.debug(f"Updated {token_symbol}: WOM={wom_score}, tweets={len(recent_tweets)}, avg_followers={avg_followers}")
             
         except Exception as e:
             logger.error(f"Failed to recalculate WOM score for {token_symbol}: {e}")
@@ -875,7 +1023,7 @@ class TweetService:
             return None
     
     async def run_tweet_pipeline(self):
-        """Run the complete tweet fetching and processing pipeline"""
+        """Run the complete tweet fetching and processing pipeline (full fetch)"""
         try:
             logger.info("Starting tweet pipeline...")
             
@@ -913,6 +1061,48 @@ class TweetService:
         except Exception as e:
             logger.error(f"Tweet pipeline failed: {e}")
             raise ServiceError(f"Tweet pipeline failed: {e}")
+    
+    async def run_tweet_pipeline_optimized(self):
+        """Run optimized tweet pipeline for frequent runs (incremental fetch)"""
+        try:
+            logger.info("Starting optimized tweet pipeline...")
+            
+            # Get active tokens
+            active_tokens = await self.db_manager.get_active_tokens()
+            if not active_tokens:
+                logger.warning("No active tokens found")
+                return
+            
+            logger.info(f"Processing {len(active_tokens)} active tokens (optimized)")
+            
+            # Process tokens concurrently with error isolation
+            results = await asyncio.gather(
+                *(self.fetch_and_store_tweets_for_token_optimized(token) for token in active_tokens),
+                return_exceptions=True
+            )
+            
+            # Log results
+            successful = 0
+            failed = 0
+            new_tweets_found = 0
+            
+            for token, result in zip(active_tokens, results):
+                if isinstance(result, Exception):
+                    logger.error(f"Optimized pipeline failed for {token}: {result}")
+                    failed += 1
+                elif result:
+                    logger.debug(f"Optimized pipeline found new tweets for {token}")
+                    new_tweets_found += 1
+                    successful += 1
+                else:
+                    logger.debug(f"Optimized pipeline: no new tweets for {token}")
+                    successful += 1
+            
+            logger.info(f"Optimized tweet pipeline completed: {successful} successful, {failed} failed, {new_tweets_found} tokens with new tweets")
+            
+        except Exception as e:
+            logger.error(f"Optimized tweet pipeline failed: {e}")
+            raise ServiceError(f"Optimized tweet pipeline failed: {e}")
     
     async def run_score_pipeline(self):
         """Run the WOM score calculation pipeline"""
@@ -952,6 +1142,22 @@ class TweetService:
         except Exception as e:
             logger.error(f"Full pipeline failed: {e}")
             raise ServiceError(f"Full pipeline failed: {e}")
+    
+    async def initialize_new_token(self, token_symbol: str) -> bool:
+        """Initialize a new token with full 48-hour history"""
+        try:
+            logger.info(f"Initializing new token {token_symbol} with full history...")
+            success = await self.fetch_and_store_tweets_for_token(token_symbol)
+            if success:
+                logger.info(f"✅ Successfully initialized {token_symbol}")
+                # Calculate initial WOM score
+                await self._recalculate_token_wom_score(token_symbol)
+            else:
+                logger.warning(f"❌ Failed to initialize {token_symbol}")
+            return success
+        except Exception as e:
+            logger.error(f"Error initializing token {token_symbol}: {e}")
+            return False
 
 # === Convenience Functions (backwards compatibility) ===
 
@@ -1010,3 +1216,32 @@ async def prune_old_tweets():
     """Prune old tweets (backwards compatibility)"""
     service = await get_service()
     await service.run_maintenance()
+
+# === New Helper Functions ===
+
+async def tweet_score_deactivate_pipeline_optimized(tweet_service: TweetService):
+    """Optimized pipeline for frequent runs (every 2 minutes)"""
+    if not tweet_service:
+        logger.warning("Tweet service not available, skipping tweet pipeline")
+        return
+    
+    try:
+        # Import here to avoid circular imports
+        from services.token_service import deactivate_low_activity_tokens
+        
+        # Use optimized tweet fetching for frequent runs
+        await tweet_service.run_tweet_pipeline_optimized()
+        await tweet_service.run_score_pipeline()
+        
+        # Run token deactivation
+        await deactivate_low_activity_tokens()
+        
+    except Exception as e:
+        logger.error(f"Optimized tweet pipeline failed: {e}")
+
+async def initialize_new_token(token_symbol: str, tweet_service: TweetService = None) -> bool:
+    """Initialize a new token with full 48-hour history"""
+    if tweet_service is None:
+        tweet_service = await get_service()
+    
+    return await tweet_service.initialize_new_token(token_symbol)
