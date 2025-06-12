@@ -488,6 +488,23 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to fetch existing tweet IDs for {token_symbol}: {e}")
             raise DatabaseError(f"Failed to fetch existing tweet IDs: {e}")
+        
+    async def get_existing_tweet_ids_in_window(self, token_symbol: str, hours: int = Config.TWEET_TIME_WINDOW_HOURS) -> set:
+        """Get existing tweet IDs only within the time window"""
+        try:
+            cutoff = DateTimeHandler.now() - timedelta(hours=hours)
+            
+            query = select([tweets.c.tweet_id]).where(
+                and_(
+                    tweets.c.token_symbol == token_symbol,
+                    tweets.c.created_at >= cutoff
+                )
+            )
+            rows = await database.fetch_all(query)
+            return {row["tweet_id"] for row in rows}
+        except Exception as e:
+            logger.error(f"Failed to fetch existing tweet IDs for {token_symbol}: {e}")
+            raise DatabaseError(f"Failed to fetch existing tweet IDs: {e}")
     
     async def store_tweets(self, processed_tweets: List[ProcessedTweet]) -> int:
         """Store tweets with atomic transaction"""
@@ -704,7 +721,6 @@ class TweetService:
         logger.info("Tweet service initialized successfully")
     
     async def fetch_and_store_tweets_for_token(self, token_symbol: str) -> bool:
-        """Fetch and store tweets for a single token"""
         try:
             logger.info(f"Processing tweets for token: {token_symbol}")
             
@@ -720,12 +736,18 @@ class TweetService:
                 logger.info(f"No tweets passed processing for {token_symbol}")
                 return False
             
-            # Filter out existing tweets
-            existing_ids = await self.db_manager.get_existing_tweet_ids(token_symbol)
+            # Only check for duplicates in the time window
+            existing_ids = await self.db_manager.get_existing_tweet_ids_in_window(
+                token_symbol, 
+                hours=Config.TWEET_TIME_WINDOW_HOURS
+            )
+            
             new_tweets = [
                 tweet for tweet in processed_tweets 
                 if tweet.tweet_id not in existing_ids
             ]
+            
+            logger.info(f"Duplicate check: {len(processed_tweets)} processed, {len(existing_ids)} existing in window, {len(new_tweets)} new")
             
             if not new_tweets:
                 logger.info(f"No new tweets to store for {token_symbol}")
