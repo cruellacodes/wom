@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from services.search_service import get_or_create_token_future
 from services.volume_service import get_or_create_volume_future
-from services.tweet_service import TweetService, ServiceError, TextCleaner
+from services.tweet_service import TweetService, ServiceError
 
 tweets_router = APIRouter()
 
@@ -25,7 +25,8 @@ async def get_stored_tweets_endpoint(
             raise HTTPException(status_code=503, detail="Tweet service unavailable")
         
         # Normalize token symbol
-        token_symbol = TextCleaner.normalize_token(token_symbol)
+        if not token_symbol.startswith('$'):
+            token_symbol = f'${token_symbol.upper()}'
         
         # Get tweets from database
         tweets = await tweet_service.db_manager.get_recent_tweets(token_symbol, hours)
@@ -128,12 +129,23 @@ async def refresh_tweets_for_token(
         if token_symbol not in active_tokens:
             raise HTTPException(status_code=404, detail=f"Token {token_symbol} is not active")
         
-        # Fetch and store tweets for this token
-        success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
+        # Use optimized method for refresh (faster) with fallback to full fetch
+        try:
+            success = await tweet_service.fetch_and_store_tweets_for_token_optimized(token_symbol)
+            if not success:
+                # Fallback to full fetch if optimized finds nothing
+                success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
+        except AttributeError:
+            # Fallback if optimized method doesn't exist
+            success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
         
         if success:
             # Recalculate WOM score for this token
-            await tweet_service._recalculate_token_wom_score(token_symbol)
+            try:
+                await tweet_service._recalculate_token_wom_score(token_symbol)
+            except AttributeError:
+                # Fallback: recalculate all scores
+                await tweet_service.recalculate_wom_scores()
             
             return {
                 "status": "success",
@@ -174,11 +186,10 @@ async def run_tweet_pipeline_for_token(
         try:
             active_tokens = await tweet_service.db_manager.get_active_tokens()
             if token_symbol not in active_tokens:
-                # Add token to active tokens if it doesn't exist
-                await tweet_service.db_manager.add_token(token_symbol)
-                logging.info(f"Added {token_symbol} to active tokens")
+                # Token not in active tokens - consider adding it manually
+                logging.warning(f"Token {token_symbol} not in active tokens - consider adding it manually")
         except Exception as e:
-            logging.warning(f"Could not verify/add token {token_symbol}: {e}")
+            logging.warning(f"Could not verify token {token_symbol}: {e}")
         
         pipeline_results = {
             "token_symbol": token_symbol,
@@ -195,8 +206,16 @@ async def run_tweet_pipeline_for_token(
                 await tweet_service.run_tweet_pipeline()
                 pipeline_results["steps_completed"].append("tweet_pipeline")
             else:
-                # Fall back to individual token processing
-                success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
+                # Try optimized method first, fallback to full
+                try:
+                    success = await tweet_service.fetch_and_store_tweets_for_token_optimized(token_symbol)
+                    if not success:
+                        # Fallback to full fetch if optimized finds nothing
+                        success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
+                except AttributeError:
+                    # Fallback if optimized method doesn't exist
+                    success = await tweet_service.fetch_and_store_tweets_for_token(token_symbol)
+                
                 if success:
                     pipeline_results["steps_completed"].append("tweet_fetch_and_store")
                 else:
@@ -215,9 +234,14 @@ async def run_tweet_pipeline_for_token(
                 await tweet_service.run_score_pipeline()
                 pipeline_results["steps_completed"].append("score_pipeline")
             else:
-                # Fall back to individual token score calculation
-                await tweet_service._recalculate_token_wom_score(token_symbol)
-                pipeline_results["steps_completed"].append("wom_score_calculation")
+                # Use public method or handle private method access
+                try:
+                    await tweet_service._recalculate_token_wom_score(token_symbol)
+                    pipeline_results["steps_completed"].append("wom_score_calculation")
+                except AttributeError:
+                    # Fallback to full score recalculation
+                    await tweet_service.recalculate_wom_scores()
+                    pipeline_results["steps_completed"].append("wom_score_calculation_all")
             
         except Exception as e:
             error_msg = f"Score pipeline failed: {str(e)}"
@@ -257,6 +281,42 @@ async def run_tweet_pipeline_for_token(
         raise HTTPException(status_code=503, detail="Tweet service error")
     except Exception as e:
         logging.error(f"Error running pipeline for {token_symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@tweets_router.post("/tweets/{token_symbol}/initialize")
+async def initialize_token_with_history(
+    token_symbol: str,
+    tweet_service: Optional[TweetService] = Depends(get_tweet_service)
+):
+    """Initialize a new token with full 48-hour history"""
+    try:
+        if not tweet_service:
+            raise HTTPException(status_code=503, detail="Tweet service unavailable")
+        
+        if not token_symbol.startswith('$'):
+            token_symbol = f'${token_symbol}'
+        
+        # Use the new initialization method
+        success = await tweet_service.initialize_new_token(token_symbol)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Successfully initialized {token_symbol} with full history",
+                "token_symbol": token_symbol
+            }
+        else:
+            return {
+                "status": "failed",
+                "message": f"Failed to initialize {token_symbol}",
+                "token_symbol": token_symbol
+            }
+            
+    except ServiceError as e:
+        logging.error(f"Service error initializing {token_symbol}: {e}")
+        raise HTTPException(status_code=503, detail="Tweet service error")
+    except Exception as e:
+        logging.error(f"Error initializing {token_symbol}: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @tweets_router.get("/tweets/{token_symbol}/stats")
@@ -333,7 +393,17 @@ async def get_tweet_stats(
 @tweets_router.get("/health")
 async def tweets_health_check(tweet_service: Optional[TweetService] = Depends(get_tweet_service)):
     """Health check for tweet-related services"""
+    sentiment_status = "not_initialized"
+    optimized_available = False
+    
+    if tweet_service:
+        if hasattr(tweet_service, 'sentiment_analyzer'):
+            sentiment_status = "initialized" if getattr(tweet_service.sentiment_analyzer, '_initialized', False) else "not_initialized"
+        
+        optimized_available = hasattr(tweet_service, 'fetch_and_store_tweets_for_token_optimized')
+    
     return {
         "tweet_service": "available" if tweet_service else "unavailable",
-        "sentiment_analyzer": "initialized" if tweet_service and getattr(tweet_service.sentiment_analyzer, '_initialized', False) else "not_initialized"
+        "sentiment_analyzer": sentiment_status,
+        "optimized_methods": "available" if optimized_available else "unavailable"
     }
