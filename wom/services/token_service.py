@@ -311,19 +311,19 @@ async def deactivate_low_activity_tokens():
         age_hours = parse_age_to_hours(age_str)
 
         # Rule 1: Token older than 3h but has < 20 total tweets
-        if age_hours > 3 and tweet_count_total < 20:
-            tokens_to_deactivate.append(symbol)
-            continue
+        # if age_hours > 3 and tweet_count_total < 20:
+        #     tokens_to_deactivate.append(symbol)
+        #     continue
 
         # Rule 2: Token older than 24h but volume < $200K
-        if age_hours > 24 and volume < 200_000:
-            tokens_to_deactivate.append(symbol)
-            continue
+        # if age_hours > 24 and volume < 200_000:
+        #     tokens_to_deactivate.append(symbol)
+        #     continue
 
         # Rule 3: Token older than 23h with < 10 tweets in last 24h
-        if age_hours > 23 and tweet_count_24h < 10:
-            tokens_to_deactivate.append(symbol)
-            continue
+        # if age_hours > 23 and tweet_count_24h < 10:
+        #     tokens_to_deactivate.append(symbol)
+        #     continue
 
         # Rule 4: Market cap too low
         if market_cap < 40_000:
