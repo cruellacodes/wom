@@ -34,7 +34,7 @@ class Config:
     
     # Optimized fetching for frequent runs
     MAX_OPTIMIZED_PAGES = 3
-    OPTIMIZED_TIME_BUFFER_MINUTES = 5
+    OPTIMIZED_TIME_BUFFER_MINUTES = 60
     
     # Filtering
     MIN_FOLLOWERS = 150
@@ -290,7 +290,7 @@ class TwitterAPIClient:
         cursor = None
         pages = 0
         
-        # Calculate cutoff time (only last few minutes)
+        # Calculate cutoff time 
         cutoff_time = DateTimeHandler.now() - timedelta(minutes=Config.OPTIMIZED_TIME_BUFFER_MINUTES)
         last_seen_id_int = int(last_seen_tweet_id) if last_seen_tweet_id else 0
         
@@ -1149,11 +1149,11 @@ class TweetService:
             logger.info(f"Initializing new token {token_symbol} with full history...")
             success = await self.fetch_and_store_tweets_for_token(token_symbol)
             if success:
-                logger.info(f"✅ Successfully initialized {token_symbol}")
+                logger.info(f"Successfully initialized {token_symbol}")
                 # Calculate initial WOM score
                 await self._recalculate_token_wom_score(token_symbol)
             else:
-                logger.warning(f"❌ Failed to initialize {token_symbol}")
+                logger.warning(f"Failed to initialize {token_symbol}")
             return success
         except Exception as e:
             logger.error(f"Error initializing token {token_symbol}: {e}")
