@@ -545,7 +545,11 @@ class DatabaseManager:
             return 0
         
         try:
-            tweet_records = [self._tweet_to_record(tweet) for tweet in processed_tweets]
+            tweet_records = []
+            for tweet in processed_tweets:
+                record = self._tweet_to_record(tweet)
+                record['tweet_id'] = int(record['tweet_id'])
+                tweet_records.append(record)
             
             query = """
                 INSERT INTO tweets (
@@ -553,7 +557,7 @@ class DatabaseManager:
                     profile_pic, created_at, wom_score, tweet_url
                 )
                 VALUES (
-                    :tweet_id::BIGINT, :token_symbol, :text, :user_name, :followers_count,
+                    :tweet_id, :token_symbol, :text, :user_name, :followers_count,
                     :profile_pic, :created_at, :wom_score, :tweet_url
                 )
                 ON CONFLICT (tweet_id) DO NOTHING
@@ -1093,6 +1097,7 @@ async def prune_old_tweets():
     await service.run_maintenance()
 
 async def tweet_score_deactivate_pipeline_optimized(tweet_service: TweetService):
+    """Optimized pipeline for frequent runs (every 2 minutes)"""
     if not tweet_service:
         logger.warning("Tweet service not available, skipping tweet pipeline")
         return
@@ -1107,6 +1112,11 @@ async def tweet_score_deactivate_pipeline_optimized(tweet_service: TweetService)
         
     except Exception as e:
         logger.error(f"Optimized tweet pipeline failed: {e}")
+
+async def run_full_pipeline():
+    """Run the complete pipeline: fetch tweets, calculate scores, and maintenance"""
+    service = await get_service()
+    await service.run_full_pipeline()
 
 async def initialize_new_token(token_symbol: str, tweet_service: TweetService = None) -> bool:
     if tweet_service is None:
