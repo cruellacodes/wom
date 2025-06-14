@@ -206,7 +206,7 @@ async def store_tokens(tokens_data):
             volume_usd=token.get("volume_usd"),
             liquidity_usd=token.get("liquidity_usd"),
             market_cap_usd=token.get("market_cap_usd"),
-            dex_url=f"https://dexscreener.com/solana/{token.get('address')}",
+            dex_url =f"https://axiom.trade/t/{token.get('address')}/@wom",
             pricechange1h=token.get("priceChange1h"),
             created_at=now,
             launchpad=sanitize_launchpad(token.get("launchpad")),
